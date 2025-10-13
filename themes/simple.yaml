@@ -1,0 +1,19 @@
+# Simple test theme with padding
+name: simple
+background: 1  # Red background
+foreground: 15  # White foreground
+default_background: 0
+default_foreground: 7
+
+padding:
+  left: 30
+  top: 30
+  right: 30
+  bottom: 30
+
+title:
+  foreground: 15
+  background: 4
+  x: 40
+  y: 10
+  font_size: 1.2
