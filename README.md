@@ -84,8 +84,11 @@ ttyvid \
   --columns 80 \
   --rows 25 \
   --title "My Demo" \
-  --no-gaps
+  --no-gaps \
+  --trailer
 ```
+
+The `--trailer` option adds 1.5 seconds of the final frame at the end before looping, creating a pause effect for better viewing.
 
 ## Options
 
@@ -375,7 +378,6 @@ The theme system is fully extensible - you can mix embedded assets with custom i
 - [ ] Parallel frame rendering with rayon
 - [ ] SIMD optimizations for bitmap operations
 - [ ] Extended color support (256 colors, true color)
-- [ ] Trailer feature implementation
 - [ ] Additional output formats (MP4, APNG)
 - [ ] GPU acceleration exploration
 

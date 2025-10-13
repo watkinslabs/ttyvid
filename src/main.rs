@@ -158,11 +158,22 @@ fn main() -> Result<()> {
         0.0
     };
     let frame_rate = args.fps.clamp(1, 100);
-    let frame_count = ((duration * frame_rate as f64).ceil() as usize).max(1);
+    let mut frame_count = ((duration * frame_rate as f64).ceil() as usize).max(1);
+
+    // Add trailer frames if requested (1.5 seconds holding the final state)
+    let trailer_frame_count = if args.trailer {
+        (frame_rate as f64 * 1.5).round() as usize
+    } else {
+        0
+    };
+    let total_frame_count = frame_count + trailer_frame_count;
 
     println!(" - frame rate: {}", frame_rate);
     println!(" - frames: {}", frame_count);
     println!(" - seconds: {:.2}", duration);
+    if args.trailer {
+        println!(" - trailer: {} frames (1.5s)", trailer_frame_count);
+    }
 
     // Create terminal emulator with theme colors
     let default_fg = theme.default_foreground;
@@ -235,14 +246,17 @@ fn main() -> Result<()> {
 
     let mut event_idx = 0;
 
-    for frame_num in 0..frame_count {
+    for frame_num in 0..total_frame_count {
         let current_time = frame_num as f64 * frame_duration;
 
-        // Process all events up to current time
-        while event_idx < events.len() && events[event_idx].timestamp <= current_time {
-            terminal.feed_bytes(&events[event_idx].data);
-            event_idx += 1;
+        // Process all events up to current time (only for non-trailer frames)
+        if frame_num < frame_count {
+            while event_idx < events.len() && events[event_idx].timestamp <= current_time {
+                terminal.feed_bytes(&events[event_idx].data);
+                event_idx += 1;
+            }
         }
+        // During trailer frames, terminal state remains at final state
 
         // Render current terminal state
         let term_canvas = rasterizer.render_grid(terminal.grid());
@@ -296,12 +310,17 @@ fn main() -> Result<()> {
         encoder.add_frame(&canvas, delay_centiseconds)?;
 
         // Progress indicator
-        let percent = ((frame_num + 1) as f64 / frame_count as f64 * 100.0) as usize;
-        print!("\r  {} of {:.2} seconds {}% Frame: {} {} FPS       ",
-            (current_time as f32).min(duration as f32),
-            duration,
+        let percent = ((frame_num + 1) as f64 / total_frame_count as f64 * 100.0) as usize;
+        let status = if frame_num >= frame_count {
+            format!("[TRAILER {}/{}]", frame_num - frame_count + 1, trailer_frame_count)
+        } else {
+            format!("{} of {:.2}s", (current_time as f32).min(duration as f32), duration)
+        };
+        print!("\r  {} {}% Frame: {}/{} {} FPS       ",
+            status,
             percent,
             frame_num + 1,
+            total_frame_count,
             frame_rate
         );
         use std::io::Write;
