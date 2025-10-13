@@ -564,10 +564,46 @@ impl LayerRenderer {
     }
 
     fn render_scale(&self, image: &LayerImage, layer: &Layer, canvas: &mut Canvas, palette: &[u8], frame_index: usize) {
-        // Scale mode: scale source bounds to dst bounds
-        // For now, simplified implementation
-        let (dst_x, dst_y, _dst_w, _dst_h) = self.calculate_dst_rect(layer, canvas, image);
-        image.composite_onto(canvas, dst_x, dst_y, palette, frame_index);
+        // Scale mode: scale source bounds to dst bounds using nearest-neighbor
+        let (dst_x, dst_y, dst_w, dst_h) = self.calculate_dst_rect(layer, canvas, image);
+
+        if dst_w <= 0 || dst_h <= 0 {
+            return;
+        }
+
+        // Get the source frame
+        let src_frame = image.get_frame(frame_index);
+
+        // Scale using nearest-neighbor interpolation
+        let mut scaled = RgbaImage::new(dst_w as u32, dst_h as u32);
+
+        let src_w = image.width as i32;
+        let src_h = image.height as i32;
+
+        for dy in 0..dst_h {
+            for dx in 0..dst_w {
+                // Map destination pixel to source pixel (nearest neighbor)
+                let sx = (dx * src_w / dst_w) as u32;
+                let sy = (dy * src_h / dst_h) as u32;
+
+                if sx < image.width && sy < image.height {
+                    let pixel = src_frame.get_pixel(sx, sy);
+                    scaled.put_pixel(dx as u32, dy as u32, *pixel);
+                }
+            }
+        }
+
+        // Create a temporary LayerImage with the scaled frame
+        let scaled_layer = LayerImage {
+            frames: vec![scaled],
+            delays: vec![10],
+            width: dst_w as u32,
+            height: dst_h as u32,
+            is_animated: false,
+        };
+
+        // Composite the scaled image onto the canvas
+        scaled_layer.composite_onto(canvas, dst_x, dst_y, palette, 0);
     }
 
     fn render_tile(&self, image: &LayerImage, layer: &Layer, canvas: &mut Canvas, palette: &[u8], frame_index: usize) {
