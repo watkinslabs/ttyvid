@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::process;
 
-use ttygif_rust::terminal::{TerminalEmulator, parser::{parse_ansi_stream, Event, EscapeType}};
+use ttyvid::terminal::{TerminalEmulator, parser::{parse_ansi_stream, Event, EscapeType}};
 
 fn main() {
     let args: Vec<String> = env::args().collect();

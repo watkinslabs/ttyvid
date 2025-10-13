@@ -201,8 +201,8 @@ impl WebmEncoder {
         self.write_ebml_element(0x1549A966, &{
             let mut data = Vec::new();
             self.write_ebml_uint_to_vec(&mut data, 0x2AD7B1, self.timestamp_scale)?; // TimestampScale
-            self.write_ebml_string_to_vec(&mut data, 0x4D80, "ttygif-rust")?; // MuxingApp
-            self.write_ebml_string_to_vec(&mut data, 0x5741, "ttygif-rust")?; // WritingApp
+            self.write_ebml_string_to_vec(&mut data, 0x4D80, "ttyvid")?; // MuxingApp
+            self.write_ebml_string_to_vec(&mut data, 0x5741, "ttyvid")?; // WritingApp
             // Duration will be written at the end if we can seek
             data
         })?;

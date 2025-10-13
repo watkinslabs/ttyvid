@@ -1640,7 +1640,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ttygif-rust"
+name = "ttyvid"
 version = "0.1.0"
 dependencies = [
  "anyhow",

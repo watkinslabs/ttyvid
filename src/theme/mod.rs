@@ -358,14 +358,14 @@ impl Theme {
         paths.push(PathBuf::from("themes"));
 
         // User data directory
-        if let Some(proj_dirs) = directories::ProjectDirs::from("", "", "ttygif-rust") {
+        if let Some(proj_dirs) = directories::ProjectDirs::from("", "", "ttyvid") {
             paths.push(proj_dirs.data_dir().join("themes"));
             paths.push(proj_dirs.config_dir().join("themes"));
         }
 
         // System-wide directories
-        paths.push(PathBuf::from("/usr/share/ttygif-rust/themes"));
-        paths.push(PathBuf::from("/usr/local/share/ttygif-rust/themes"));
+        paths.push(PathBuf::from("/usr/share/ttyvid/themes"));
+        paths.push(PathBuf::from("/usr/local/share/ttyvid/themes"));
 
         paths
     }

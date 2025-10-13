@@ -1,8 +1,12 @@
 use anyhow::{Result, bail, Context};
 use image::{Rgba, RgbaImage};
 use std::path::Path;
+use std::io::Cursor;
 use crate::theme::{Layer, NineSliceConfig};
 use crate::renderer::Canvas;
+
+// Include embedded layers
+include!(concat!(env!("OUT_DIR"), "/embedded_layers.rs"));
 
 pub struct LayerImage {
     pub frames: Vec<RgbaImage>,  // Multiple frames for animated GIFs
@@ -37,11 +41,19 @@ impl LayerImage {
     }
 
     pub fn load(path: &Path) -> Result<Self> {
-        // Check if the file is a GIF
+        // Try embedded first if path has no directory component (just filename)
+        if path.parent().map(|p| p.as_os_str().is_empty()).unwrap_or(true) {
+            if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+                if let Some(&embedded_data) = EMBEDDED_LAYERS.get(filename) {
+                    return Self::load_from_bytes(embedded_data, filename);
+                }
+            }
+        }
+
+        // Fall back to filesystem
         if path.extension().and_then(|e| e.to_str()) == Some("gif") {
             Self::load_animated_gif(path)
         } else {
-            // Load as static image
             let img = image::open(path)
                 .with_context(|| format!("Failed to load layer image: {}", path.display()))?;
 
@@ -50,7 +62,27 @@ impl LayerImage {
 
             Ok(Self {
                 frames: vec![rgba],
-                delays: vec![10], // Default delay
+                delays: vec![10],
+                width,
+                height,
+                is_animated: false,
+            })
+        }
+    }
+
+    pub fn load_from_bytes(data: &[u8], name: &str) -> Result<Self> {
+        if name.ends_with(".gif") {
+            Self::load_animated_gif_from_bytes(data, name)
+        } else {
+            let img = image::load_from_memory(data)
+                .with_context(|| format!("Failed to load embedded layer image: {}", name))?;
+
+            let rgba = img.to_rgba8();
+            let (width, height) = rgba.dimensions();
+
+            Ok(Self {
+                frames: vec![rgba],
+                delays: vec![10],
                 width,
                 height,
                 is_animated: false,
@@ -116,6 +148,61 @@ impl LayerImage {
         })
     }
 
+    fn load_animated_gif_from_bytes(data: &[u8], name: &str) -> Result<Self> {
+        let cursor = Cursor::new(data);
+
+        let mut decoder = gif::DecodeOptions::new();
+        decoder.set_color_output(gif::ColorOutput::RGBA);
+
+        let mut decoder = decoder.read_info(cursor)
+            .with_context(|| format!("Failed to decode embedded GIF: {}", name))?;
+
+        let mut frames = Vec::new();
+        let mut delays = Vec::new();
+        let (width, height) = (decoder.width() as u32, decoder.height() as u32);
+
+        while let Some(frame) = decoder.read_next_frame()? {
+            let rgba_data = frame.buffer.to_vec();
+            let frame_width = frame.width as u32;
+            let frame_height = frame.height as u32;
+            let frame_left = frame.left as u32;
+            let frame_top = frame.top as u32;
+
+            let frame_image = RgbaImage::from_vec(frame_width, frame_height, rgba_data)
+                .context("Failed to create image from embedded GIF frame")?;
+
+            // Pad frame to full GIF dimensions if needed
+            let padded_frame = if frame_width != width || frame_height != height {
+                let mut padded = RgbaImage::new(width, height);
+                for y in 0..frame_height {
+                    for x in 0..frame_width {
+                        let pixel = frame_image.get_pixel(x, y);
+                        padded.put_pixel(x + frame_left, y + frame_top, *pixel);
+                    }
+                }
+                padded
+            } else {
+                frame_image
+            };
+
+            frames.push(padded_frame);
+            delays.push(frame.delay);
+        }
+
+        if frames.is_empty() {
+            bail!("Embedded GIF has no frames: {}", name);
+        }
+
+        let is_animated = frames.len() > 1;
+
+        Ok(Self {
+            frames,
+            delays,
+            width,
+            height,
+            is_animated,
+        })
+    }
 
     /// Perform 9-slice scaling on a specific frame
     /// Python uses inclusive coordinates where width = right - left + 1

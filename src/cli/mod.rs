@@ -2,9 +2,9 @@ use clap::Parser;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
-#[command(name = "ttygif-rust")]
+#[command(name = "ttyvid")]
 #[command(version = "0.1.0")]
-#[command(about = "Convert terminal output to animated GIF", long_about = None)]
+#[command(about = "Convert terminal recordings to video (GIF/WebM)", long_about = None)]
 pub struct Args {
     /// Input asciicast file (reads from stdin if not provided, supports both .cast format and raw terminal data)
     #[arg(short, long)]

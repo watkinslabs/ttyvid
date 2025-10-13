@@ -28,12 +28,12 @@ fn find_layer_file(layer_file: &str) -> PathBuf {
     // Search in theme directories
     let search_paths = vec![
         PathBuf::from("themes"),
-        PathBuf::from("/usr/share/ttygif-rust/themes"),
-        PathBuf::from("/usr/local/share/ttygif-rust/themes"),
+        PathBuf::from("/usr/share/ttyvid/themes"),
+        PathBuf::from("/usr/local/share/ttyvid/themes"),
     ];
 
     // Add user directories
-    if let Some(proj_dirs) = directories::ProjectDirs::from("", "", "ttygif-rust") {
+    if let Some(proj_dirs) = directories::ProjectDirs::from("", "", "ttyvid") {
         for base_path in [proj_dirs.data_dir(), proj_dirs.config_dir()] {
             for search_path in &search_paths {
                 let layer_path = base_path.join("themes").join(layer_file);
@@ -59,7 +59,7 @@ fn find_layer_file(layer_file: &str) -> PathBuf {
 fn main() -> Result<()> {
     let args = cli::Args::parse();
 
-    println!("ttygif-rust version [0.1.0]\n");
+    println!("ttyvid version [0.1.0]\n");
 
     // Determine output format
     let output_format = if let Some(ref fmt_str) = args.format {
@@ -92,13 +92,13 @@ fn main() -> Result<()> {
         let ext = output_format.extension();
         let mut index = 0;
         loop {
-            let filename = format!("ttygif-{:04}.{}", index, ext);
+            let filename = format!("ttyvid-{:04}.{}", index, ext);
             if !std::path::Path::new(&filename).exists() {
                 break PathBuf::from(filename);
             }
             index += 1;
             if index >= 10000 {
-                anyhow::bail!("No available output filenames (ttygif-0000.{} to ttygif-9999.{} all exist)", ext, ext);
+                anyhow::bail!("No available output filenames (ttyvid-0000.{} to ttyvid-9999.{} all exist)", ext, ext);
             }
         }
     };

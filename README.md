@@ -1,49 +1,78 @@
-# ttygif-rust
+# ttyvid
 
-A high-performance Rust rewrite of ttygif - convert terminal output to animated GIFs.
+Convert terminal recordings to video formats (GIF/WebM). High-performance Rust implementation with full terminal emulation and 56+ embedded classic bitmap fonts.
 
 ## Features
 
-- ✅ **Full terminal emulation** using the vte crate (same as Alacritty)
-- ✅ **GIF encoding** with frame differencing for optimization
-- ✅ **ASCII cast support** - read .cast files or stdin
-- ✅ **Fast rendering** - built-in 8x16 monospace font
-- ✅ **Speed control** - adjust playback speed
-- ✅ **Frame rate control** - 1-100 FPS
-- ✅ **CLI compatible** with original ttygif
+- ✅ **Full terminal emulation** - ANSI/VT100 escape sequences
+- ✅ **Multiple output formats** - GIF and WebM (with AV1)
+- ✅ **56 embedded fonts** - IBM, ATI, Verite, Tandy, Phoenix, and more
+- ✅ **Theme system** - Customizable layouts with layers and animations
+- ✅ **Asciicast support** - Read .cast v2 files or stdin
+- ✅ **Speed control** - Adjust playback speed and FPS
+- ✅ **Frame optimization** - Differencing for efficient file sizes
 
-## Building
+## Installation
+
+### From Source
 
 ```bash
 cargo build --release
 ```
 
-The binary will be at `target/release/ttygif-rust`.
+The binary will be at `target/release/ttyvid`.
+
+### Quick Start
+
+```bash
+# Record a terminal session with asciinema
+asciinema rec recording.cast
+
+# Convert to GIF
+ttyvid -i recording.cast -o output.gif
+
+# Convert to WebM (requires --features webm)
+ttyvid -i recording.cast -o output.webm --format webm
+```
 
 ## Usage
 
 ### From stdin (pipe)
 
 ```bash
-echo -e "Hello \e[31mRed\e[0m World" | ./target/release/ttygif-rust --output hello.gif
+echo -e "Hello \e[31mRed\e[0m World" | ttyvid -o hello.gif
 ```
 
 ### From asciicast file
 
 ```bash
-./target/release/ttygif-rust --input recording.cast --output output.gif
+ttyvid -i recording.cast -o output.gif
 ```
 
-### With options
+### With custom theme and font
 
 ```bash
-./target/release/ttygif-rust \
+ttyvid -i recording.cast -o output.gif \
+  --theme windows7 \
+  --font IBM_VGA8 \
+  --fps 30 \
+  --speed 1.5
+```
+
+### Advanced options
+
+```bash
+ttyvid \
   --input recording.cast \
   --output output.gif \
+  --theme mac \
+  --font Verite_9x16 \
   --fps 30 \
   --speed 2.0 \
   --columns 80 \
-  --rows 25
+  --rows 25 \
+  --title "My Demo" \
+  --no-gaps
 ```
 
 ## Options
@@ -97,26 +126,52 @@ Input (stdin/cast) → Terminal Emulator →
 Renderer → GIF Encoder → Output
 ```
 
+## Available Fonts
+
+All fonts are automatically embedded at compile time from `themes/fonts/`:
+
+- **IBM**: BIOS, CGA, EGA, VGA, MDA, PS/2, 3270pc, Conv, ISO8/9
+- **ATI**: 8x8, 8x14, 8x16, 9x14, 9x16, SmallW_6x8
+- **Phoenix**: BIOS, EGA_8x8, EGA_8x14, EGA_8x16, EGA_9x14
+- **Compaq**: Thin_8x8, Thin_8x14, Thin_8x16
+- **Tandy**: New/Old TV, New/Old 225, New Mono
+- **Toshiba**: LCD_8x8, LCD_8x16
+- **Verite**: 8x8, 8x14, 8x16, 9x14, 9x16 (default)
+- **Wyse**: 700a, 700a-2y, 700b-2y
+- **Others**: AMI_BIOS, DTK_BIOS, ITT_BIOS, VTech_BIOS, ATT_PC6300, AmstradPC1512, Kaypro2K, VGA_SquarePx
+
+## Available Themes
+
+Built-in themes in `themes/`:
+
+- `default` - Classic terminal look
+- `windows7` - Windows 7 CMD style
+- `mac` - macOS Terminal style
+- `fdwm` - Floating window manager theme
+- `game` - Retro gaming console
+- `bar` - Status bar theme
+- `opensource` - Open source branding
+- `scripted` - Script demonstration theme
+- `simple` - Minimal theme
+
 ## TODO
 
-- [ ] Parse .fd font files from original ttygif
-- [ ] Implement full theme system with layers
-- [ ] 9-slice scaling for decorative frames
 - [ ] Parallel frame rendering with rayon
 - [ ] SIMD optimizations for bitmap operations
-- [ ] Embed all 50+ fonts from original
-- [ ] Extended color support (256 colors)
-- [ ] Trailer feature
-- [ ] Title overlay
+- [ ] Extended color support (256 colors, true color)
+- [ ] Trailer feature implementation
+- [ ] Additional output formats (MP4, APNG)
+- [ ] GPU acceleration exploration
 
 ## Comparison with Original
 
-| Feature | Original (Python) | Rust Rewrite | Status |
+| Feature | Original (Python) | ttyvid (Rust) | Status |
 |---------|------------------|--------------|--------|
-| Terminal Emulation | Custom | vte (industry standard) | ✅ |
+| Terminal Emulation | Custom | Full ANSI/VT100 | ✅ |
 | GIF Encoding | Custom | gif crate | ✅ |
-| Font Support | 50+ .fd fonts | Built-in 8x16 | 🚧 |
-| Theme System | Full with layers | Simplified | 🚧 |
+| WebM Encoding | N/A | rav1e (AV1) | ✅ |
+| Font Support | 50+ .fd fonts | 56 .fd fonts embedded | ✅ |
+| Theme System | Full with layers | Full with layers | ✅ |
 | Performance | Good | Excellent | ✅ |
 | Binary Size | N/A (Python) | ~5-8 MB | ✅ |
 | Dependencies | Python + libs | None (static) | ✅ |
@@ -128,7 +183,7 @@ Renderer → GIF Encoder → Output
 - Rust 1.70+ (2021 edition)
 - Cargo
 
-### Build
+### Build Commands
 
 ```bash
 # Debug build
@@ -137,29 +192,41 @@ cargo build
 # Release build (optimized)
 cargo build --release
 
+# Build with WebM support (requires rav1e)
+cargo build --release --features webm
+
 # Run tests
 cargo test
 
 # Run with example
-echo "Test" | cargo run --release -- --output test.gif
+echo "Test" | cargo run --release -- -o test.gif
 ```
+
+### Build System
+
+The project uses `build.rs` to automatically:
+- Scan `themes/fonts/` directory
+- Generate font embedding code at compile time
+- Create font lookup tables
+
+To add new fonts, simply place `.fd` files in `themes/fonts/` and rebuild.
 
 ## License
 
-Same as original ttygif
+MIT / Apache 2.0 (choose one)
 
 ## Credits
 
-- Original ttygif by Chris Watkins
-- Rust rewrite implementation
-- vte crate by Alacritty team
+- Original ttygif concept and fonts
+- Rust implementation with modern architecture
 - gif crate for GIF encoding
+- rav1e for WebM/AV1 encoding
 
 ## Contributing
 
-This is an MVP implementation. Contributions welcome for:
+Contributions welcome! Areas of interest:
 
-- Full .fd font parser
-- Complete theme system
-- Performance optimizations
-- Additional ANSI sequence support
+- Performance optimizations (SIMD, GPU, parallel)
+- Additional output formats
+- Extended color support (true color)
+- Bug fixes and documentation
