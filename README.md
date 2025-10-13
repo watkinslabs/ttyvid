@@ -2,6 +2,10 @@
 
 Convert terminal recordings to video formats (GIF/WebM). High-performance Rust implementation with full terminal emulation and 56+ embedded classic bitmap fonts.
 
+![ttyvid demo with animated theme layers](demo-preview.gif)
+
+*Example: fdwm-x theme with animated window decoration overlay and 9-slice frame scaling*
+
 ## Features
 
 - ✅ **Full terminal emulation** - ANSI/VT100 escape sequences
@@ -14,9 +18,17 @@ Convert terminal recordings to video formats (GIF/WebM). High-performance Rust i
 
 ## Installation
 
+### From crates.io
+
+```bash
+cargo install ttyvid
+```
+
 ### From Source
 
 ```bash
+git clone https://github.com/chris17453/ttyvid.git
+cd ttyvid
 cargo build --release
 ```
 
@@ -145,14 +157,218 @@ All fonts are automatically embedded at compile time from `themes/fonts/`:
 Built-in themes in `themes/`:
 
 - `default` - Classic terminal look
-- `windows7` - Windows 7 CMD style
-- `mac` - macOS Terminal style
+- `windows7` - Windows 7 CMD style with dialog frame
+- `mac` - macOS Terminal style with window controls
 - `fdwm` - Floating window manager theme
-- `game` - Retro gaming console
+- `fdwm-x` - Extended window manager with animations
+- `game` - Retro gaming console frame
 - `bar` - Status bar theme
-- `opensource` - Open source branding
-- `scripted` - Script demonstration theme
-- `simple` - Minimal theme
+- `opensource` - Open source branding banner
+- `scripted` - Script demonstration with annotations
+- `simple` - Minimal theme (terminal only)
+
+## Theme System
+
+ttyvid features a powerful layer-based theme system that allows extensive customization of the final output with support for animated components, flexible positioning, and multiple scaling modes.
+
+### Layer-Based Architecture
+
+Themes are built from **layers** - individual image files (GIF/PNG) that are composited together:
+
+- **Underlays** (depth < 0): Rendered behind the terminal output (backgrounds, frames)
+- **Overlays** (depth ≥ 0): Rendered on top of the terminal output (window controls, decorations)
+
+Each layer can be:
+- **Static** or **animated** (multi-frame GIF)
+- Positioned anywhere on the canvas
+- Scaled using different algorithms
+- Animated with custom speed and looping
+
+### Layer Rendering Modes
+
+Layers support multiple rendering modes for different visual effects:
+
+#### Copy Mode
+```yaml
+mode: copy
+```
+Direct pixel-perfect copying from source to destination. Ideal for static decorative elements.
+
+#### Tile Mode
+```yaml
+mode: tile
+```
+Repeats the layer image across the entire canvas. Perfect for textured backgrounds or patterns.
+
+#### Center Mode
+```yaml
+mode: center
+```
+Centers the layer on the canvas. Useful for logos or centered decorative elements.
+
+#### Scale Mode
+```yaml
+mode: scale
+```
+Scales the layer to fit the destination bounds using nearest-neighbor interpolation.
+
+#### 9-Slice Scaling
+```yaml
+mode: 9slice
+nineslice:
+  outer_left: 10
+  outer_top: 10
+  outer_right: 10
+  outer_bottom: 10
+  inner_left: 20
+  inner_top: 20
+  inner_right: 20
+  inner_bottom: 20
+```
+Advanced scaling that preserves corners and edges while stretching the center. Essential for window frames and dialogs that need to resize without distorting decorative borders.
+
+**How it works:**
+- Divides the source image into 9 regions (4 corners, 4 edges, 1 center)
+- Corners remain fixed size
+- Edges stretch in one direction only
+- Center stretches in both directions
+
+#### 3-Slice Scaling
+```yaml
+mode: 3slice
+```
+Similar to 9-slice but for horizontal or vertical stretching only. Useful for title bars and status bars.
+
+### Animated Layers
+
+Layers support animated GIF files with full control over playback:
+
+```yaml
+layers:
+  - depth: -1
+    file: layers/animated-background.gif
+    mode: center
+    animation:
+      speed: 1.5        # 1.5x speed multiplier
+      loop: true        # Loop animation
+      start_frame: 0    # Start at first frame
+```
+
+**Animation features:**
+- Multi-frame GIF support
+- Independent speed control per layer
+- Optional looping
+- Frame timing preserved from source GIF
+- Synchronized with video output timeline
+
+### Layer Positioning
+
+Flexible positioning system with support for absolute and relative coordinates:
+
+```yaml
+layers:
+  - depth: 1
+    file: layers/window-controls.gif
+    mode: copy
+    dst_bounds:
+      left: 10          # 10 pixels from left
+      top: 10           # 10 pixels from top
+      right: -110       # 110 pixels from right edge (negative = from right)
+      bottom: auto      # Auto-calculate based on image size
+```
+
+**Positioning options:**
+- Absolute pixel coordinates
+- Negative values offset from opposite edge
+- `auto` for automatic sizing
+- Per-layer bounds control
+
+### Custom Theme Example
+
+Create a custom theme with window frame and animated decorations:
+
+```yaml
+name: my-custom-theme
+background: 0           # Black background
+foreground: 7           # White text
+transparent: 0          # Transparency color index
+
+padding:
+  left: 20
+  top: 40
+  right: 20
+  bottom: 20
+
+title:
+  foreground: 15        # Bright white
+  background: 4         # Red
+  x: 30
+  y: 10
+  font_size: 1.5
+
+layers:
+  # Background frame (underlay)
+  - depth: -1
+    file: layers/my-frame.gif
+    mode: 9slice
+    nineslice:
+      outer_left: 0
+      outer_top: 0
+      outer_right: auto
+      outer_bottom: auto
+      inner_left: 30
+      inner_top: 30
+      inner_right: auto
+      inner_bottom: auto
+
+  # Animated decoration (overlay)
+  - depth: 1
+    file: layers/spinner.gif
+    mode: copy
+    animation:
+      speed: 2.0
+      loop: true
+    dst_bounds:
+      left: -50
+      top: 10
+      right: auto
+      bottom: auto
+```
+
+### Embedded vs Custom Layers
+
+**Embedded layers** (included in binary):
+- 11 pre-built layer images
+- Loaded automatically by filename
+- No external files needed
+
+**Custom layers** (filesystem):
+- Place images in `themes/layers/` or specify full path
+- Falls back to embedded if not found
+- Supports both GIF and PNG formats
+
+### Creating Custom Layers
+
+1. **Design your layer** in any image editor
+2. **Export as GIF** (with animation if desired)
+3. **Save to** `themes/layers/your-layer.gif`
+4. **Reference in theme YAML:**
+   ```yaml
+   layers:
+     - depth: -1
+       file: layers/your-layer.gif
+       mode: 9slice
+   ```
+
+### Theme Customization Workflow
+
+1. Start with an existing theme as template
+2. Modify colors, padding, and positioning
+3. Add or replace layer images
+4. Adjust animation speeds and rendering modes
+5. Test with: `ttyvid -i test.cast -o output.gif --theme my-theme`
+
+The theme system is fully extensible - you can mix embedded assets with custom images, create complex multi-layer compositions, and animate individual components independently for professional-looking terminal recordings.
 
 ## TODO
 
@@ -213,7 +429,7 @@ To add new fonts, simply place `.fd` files in `themes/fonts/` and rebuild.
 
 ## License
 
-MIT / Apache 2.0 (choose one)
+MIT
 
 ## Credits
 
