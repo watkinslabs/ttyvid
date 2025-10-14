@@ -3,14 +3,14 @@ use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(name = "ttyvid")]
-#[command(version = "0.1.0")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "Convert terminal recordings to video (GIF/WebM)", long_about = None)]
 pub struct Args {
     /// Input asciicast file (reads from stdin if not provided, supports both .cast format and raw terminal data)
     #[arg(short, long)]
     pub input: Option<PathBuf>,
 
-    /// Output GIF file
+    /// Output file (format auto-detected from .gif/.webm extension)
     #[arg(short, long)]
     pub output: Option<PathBuf>,
 
@@ -70,7 +70,7 @@ pub struct Args {
     #[arg(long)]
     pub underlay: Option<PathBuf>,
 
-    /// Output format (gif, webm with --features webm)
+    /// Output format (optional, auto-detected from output file extension if not specified)
     #[arg(long, value_name = "FORMAT")]
     pub format: Option<String>,
 }

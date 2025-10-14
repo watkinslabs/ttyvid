@@ -6,6 +6,10 @@ Convert terminal recordings to video formats (GIF/WebM). High-performance Rust i
 
 *Example: fdwm-x theme with animated window decoration overlay and 9-slice frame scaling*
 
+![Full-size terminal output example](build_test/test-fullsize.gif)
+
+*Example: Full-size terminal recording*
+
 ## Features
 
 - ✅ **Full terminal emulation** - ANSI/VT100 escape sequences

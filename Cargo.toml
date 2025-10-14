@@ -1,6 +1,6 @@
 [package]
 name = "ttyvid"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Chris Watkins <chris@watkinslabs.com>"]
 description = "Convert terminal recordings to video (GIF/WebM) with embedded fonts and themes"
@@ -16,7 +16,7 @@ name = "ttyvid"
 path = "src/main.rs"
 
 [features]
-default = []
+default = ["webm"]
 webm = ["rav1e"]
 
 [dependencies]

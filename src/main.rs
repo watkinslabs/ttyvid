@@ -63,7 +63,8 @@ fn main() -> Result<()> {
 
     // Determine output format
     let output_format = if let Some(ref fmt_str) = args.format {
-        match fmt_str.to_lowercase().as_str() {
+        // Explicit format specified
+        let explicit_format = match fmt_str.to_lowercase().as_str() {
             "gif" => OutputFormat::Gif,
             #[cfg(feature = "webm")]
             "webm" => OutputFormat::Webm,
@@ -77,10 +78,25 @@ fn main() -> Result<()> {
                     anyhow::bail!("Unknown format: {}. Supported formats: gif (compile with --features webm for WebM support)", fmt_str)
                 }
             }
+        };
+
+        // Warn if explicit format doesn't match output file extension
+        if let Some(ref path) = args.output {
+            if let Some(detected_format) = OutputFormat::from_path(path) {
+                if detected_format != explicit_format {
+                    eprintln!("Warning: Specified format '{:?}' doesn't match output file extension '.{}'",
+                        explicit_format, path.extension().and_then(|e| e.to_str()).unwrap_or("?"));
+                    eprintln!("         Using specified format: {:?}", explicit_format);
+                }
+            }
         }
+
+        explicit_format
     } else if let Some(ref path) = args.output {
+        // Auto-detect from output file extension
         OutputFormat::from_path(path).unwrap_or(OutputFormat::Gif)
     } else {
+        // Default to GIF
         OutputFormat::Gif
     };
 

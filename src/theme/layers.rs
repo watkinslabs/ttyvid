@@ -104,33 +104,69 @@ impl LayerImage {
         let mut delays = Vec::new();
         let (width, height) = (decoder.width() as u32, decoder.height() as u32);
 
+        // Canvas to accumulate frames for proper compositing
+        let mut canvas = RgbaImage::from_pixel(width, height, Rgba([0, 0, 0, 0]));
+        let mut previous_canvas = canvas.clone();
+
         while let Some(frame) = decoder.read_next_frame()? {
+            use gif::DisposalMethod;
+
             let rgba_data = frame.buffer.to_vec();
             let frame_width = frame.width as u32;
             let frame_height = frame.height as u32;
             let frame_left = frame.left as u32;
             let frame_top = frame.top as u32;
+            let dispose = frame.dispose;
 
             let frame_image = RgbaImage::from_vec(frame_width, frame_height, rgba_data)
                 .context("Failed to create image from GIF frame")?;
 
-            // Pad frame to full GIF dimensions if needed
-            let padded_frame = if frame_width != width || frame_height != height {
-                let mut padded = RgbaImage::new(width, height);
-                // Copy frame data at the correct offset
-                for y in 0..frame_height {
-                    for x in 0..frame_width {
-                        let pixel = frame_image.get_pixel(x, y);
-                        padded.put_pixel(x + frame_left, y + frame_top, *pixel);
+            // Composite frame onto canvas
+            for y in 0..frame_height {
+                for x in 0..frame_width {
+                    let pixel = frame_image.get_pixel(x, y);
+                    let dest_x = x + frame_left;
+                    let dest_y = y + frame_top;
+
+                    if dest_x < width && dest_y < height {
+                        // Alpha blend the pixel
+                        let bg = canvas.get_pixel(dest_x, dest_y);
+                        let alpha = pixel[3] as f32 / 255.0;
+                        let blended = Rgba([
+                            ((pixel[0] as f32 * alpha) + (bg[0] as f32 * (1.0 - alpha))) as u8,
+                            ((pixel[1] as f32 * alpha) + (bg[1] as f32 * (1.0 - alpha))) as u8,
+                            ((pixel[2] as f32 * alpha) + (bg[2] as f32 * (1.0 - alpha))) as u8,
+                            255,
+                        ]);
+                        canvas.put_pixel(dest_x, dest_y, blended);
                     }
                 }
-                padded
-            } else {
-                frame_image
-            };
+            }
 
-            frames.push(padded_frame);
-            delays.push(frame.delay); // delay in centiseconds
+            // Store a copy of the current canvas state as this frame
+            frames.push(canvas.clone());
+            delays.push(frame.delay);
+
+            // Handle disposal method for next frame
+            match dispose {
+                DisposalMethod::Any | DisposalMethod::Keep => {
+                    // Keep: Leave canvas as is for next frame
+                    previous_canvas = canvas.clone();
+                }
+                DisposalMethod::Background => {
+                    // Background: Clear the frame area to transparent
+                    for y in frame_top..(frame_top + frame_height).min(height) {
+                        for x in frame_left..(frame_left + frame_width).min(width) {
+                            canvas.put_pixel(x, y, Rgba([0, 0, 0, 0]));
+                        }
+                    }
+                    previous_canvas = canvas.clone();
+                }
+                DisposalMethod::Previous => {
+                    // Previous: Restore to state before this frame was drawn
+                    canvas = previous_canvas.clone();
+                }
+            }
         }
 
         if frames.is_empty() {
@@ -161,32 +197,69 @@ impl LayerImage {
         let mut delays = Vec::new();
         let (width, height) = (decoder.width() as u32, decoder.height() as u32);
 
+        // Canvas to accumulate frames for proper compositing
+        let mut canvas = RgbaImage::from_pixel(width, height, Rgba([0, 0, 0, 0]));
+        let mut previous_canvas = canvas.clone();
+
         while let Some(frame) = decoder.read_next_frame()? {
+            use gif::DisposalMethod;
+
             let rgba_data = frame.buffer.to_vec();
             let frame_width = frame.width as u32;
             let frame_height = frame.height as u32;
             let frame_left = frame.left as u32;
             let frame_top = frame.top as u32;
+            let dispose = frame.dispose;
 
             let frame_image = RgbaImage::from_vec(frame_width, frame_height, rgba_data)
                 .context("Failed to create image from embedded GIF frame")?;
 
-            // Pad frame to full GIF dimensions if needed
-            let padded_frame = if frame_width != width || frame_height != height {
-                let mut padded = RgbaImage::new(width, height);
-                for y in 0..frame_height {
-                    for x in 0..frame_width {
-                        let pixel = frame_image.get_pixel(x, y);
-                        padded.put_pixel(x + frame_left, y + frame_top, *pixel);
+            // Composite frame onto canvas
+            for y in 0..frame_height {
+                for x in 0..frame_width {
+                    let pixel = frame_image.get_pixel(x, y);
+                    let dest_x = x + frame_left;
+                    let dest_y = y + frame_top;
+
+                    if dest_x < width && dest_y < height {
+                        // Alpha blend the pixel
+                        let bg = canvas.get_pixel(dest_x, dest_y);
+                        let alpha = pixel[3] as f32 / 255.0;
+                        let blended = Rgba([
+                            ((pixel[0] as f32 * alpha) + (bg[0] as f32 * (1.0 - alpha))) as u8,
+                            ((pixel[1] as f32 * alpha) + (bg[1] as f32 * (1.0 - alpha))) as u8,
+                            ((pixel[2] as f32 * alpha) + (bg[2] as f32 * (1.0 - alpha))) as u8,
+                            255,
+                        ]);
+                        canvas.put_pixel(dest_x, dest_y, blended);
                     }
                 }
-                padded
-            } else {
-                frame_image
-            };
+            }
 
-            frames.push(padded_frame);
+            // Store a copy of the current canvas state as this frame
+            frames.push(canvas.clone());
             delays.push(frame.delay);
+
+            // Handle disposal method for next frame
+            match dispose {
+                DisposalMethod::Any | DisposalMethod::Keep => {
+                    // Keep: Leave canvas as is for next frame
+                    previous_canvas = canvas.clone();
+                }
+                DisposalMethod::Background => {
+                    // Background: Clear the frame area to transparent
+                    for y in frame_top..(frame_top + frame_height).min(height) {
+                        for x in frame_left..(frame_left + frame_width).min(width) {
+                            canvas.put_pixel(x, y, Rgba([0, 0, 0, 0]));
+                        }
+                    }
+                    previous_canvas = canvas.clone();
+                }
+                DisposalMethod::Previous => {
+                    // Previous: Restore to state before this frame was drawn
+                    canvas = previous_canvas.clone();
+                }
+            }
         }
 
         if frames.is_empty() {
