@@ -41,12 +41,10 @@ impl LayerImage {
     }
 
     pub fn load(path: &Path) -> Result<Self> {
-        // Try embedded first if path has no directory component (just filename)
-        if path.parent().map(|p| p.as_os_str().is_empty()).unwrap_or(true) {
-            if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-                if let Some(&embedded_data) = EMBEDDED_LAYERS.get(filename) {
-                    return Self::load_from_bytes(embedded_data, filename);
-                }
+        // Try embedded first - extract just the filename to check against embedded layers
+        if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+            if let Some(&embedded_data) = EMBEDDED_LAYERS.get(filename) {
+                return Self::load_from_bytes(embedded_data, filename);
             }
         }
 

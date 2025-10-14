@@ -38,6 +38,40 @@ cargo build --release
 
 The binary will be at `target/release/ttyvid`.
 
+### MCP Integration (Model Context Protocol)
+
+Use ttyvid directly from Claude Code and other AI assistants!
+
+**Install MCP Server:**
+```bash
+cd mcp-server
+npm install
+npm run build
+npm link
+```
+
+**Configure Claude Code:**
+
+Add to your MCP settings:
+```json
+{
+  "mcpServers": {
+    "ttyvid": {
+      "command": "ttyvid-mcp"
+    }
+  }
+}
+```
+
+**Use it naturally:**
+```
+User: "Convert my recording.cast to GIF with fdwm-x theme at 30fps"
+Claude: [Automatically converts using ttyvid MCP tool]
+Claude: "Done! Created output.gif with fdwm-x theme at 30fps"
+```
+
+See [mcp-server/README.md](mcp-server/README.md) for full documentation.
+
 ### Quick Start
 
 ```bash
