@@ -1,3 +1,6 @@
+use std::io::{Write, Read};
+use std::time::Duration;
+
 pub struct Palette {
     colors: Vec<u8>, // RGB triplets
 }
@@ -10,6 +13,47 @@ impl Palette {
             colors.extend_from_slice(rgb);
         }
         Self { colors }
+    }
+
+    /// Query the current terminal for its actual color palette
+    /// Falls back to default palette for any colors that can't be queried
+    /// Returns (palette, default_fg_index, default_bg_index)
+    pub fn from_terminal() -> (Self, Option<u8>, Option<u8>) {
+        // Check if we have a TTY
+        if !crossterm::tty::IsTty::is_tty(&std::io::stderr()) {
+            eprintln!("Warning: Not running in a TTY, using default palette");
+            return (Self::default(), None, None);
+        }
+
+        // Start with default palette as fallback
+        let mut palette = Self::default();
+
+        eprintln!("Querying terminal colors...");
+
+        // Try to query the first 16 colors (most important)
+        // OSC 4 ; color ; ? BEL
+        for color_idx in 0..16 {
+            if let Some((r, g, b)) = query_terminal_color(color_idx) {
+                let idx = color_idx * 3;
+                palette.colors[idx] = r;
+                palette.colors[idx + 1] = g;
+                palette.colors[idx + 2] = b;
+            }
+        }
+
+        // Query default foreground (OSC 10) and background (OSC 11) colors
+        let default_fg = query_default_color(10).and_then(|(r, g, b)| {
+            // Find closest palette index
+            Some(palette.match_color_index(r as i32, g as i32, b as i32))
+        });
+
+        let default_bg = query_default_color(11).and_then(|(r, g, b)| {
+            // Find closest palette index
+            Some(palette.match_color_index(r as i32, g as i32, b as i32))
+        });
+
+        eprintln!("Terminal colors captured");
+        (palette, default_fg, default_bg)
     }
 
     pub fn default() -> Self {
@@ -114,4 +158,150 @@ impl Palette {
 
         mapped_color as u8
     }
+}
+
+/// Query default foreground (10) or background (11) color using OSC escape sequence
+/// Returns None if the query fails or times out
+fn query_default_color(osc_number: usize) -> Option<(u8, u8, u8)> {
+    use std::io::stderr;
+    use crossterm::terminal::{enable_raw_mode, disable_raw_mode};
+
+    // OSC 10 ; ? BEL for foreground, OSC 11 ; ? BEL for background
+    let query = format!("\x1b]{};?\x1b\\", osc_number);
+
+    // Enable raw mode to read response
+    if enable_raw_mode().is_err() {
+        return None;
+    }
+
+    // Send query to stderr (where terminal control sequences go)
+    let mut stderr = stderr();
+    if stderr.write_all(query.as_bytes()).is_err() {
+        let _ = disable_raw_mode();
+        return None;
+    }
+    if stderr.flush().is_err() {
+        let _ = disable_raw_mode();
+        return None;
+    }
+
+    // Read response with timeout
+    let result = read_osc_response(Duration::from_millis(100));
+
+    // Restore terminal mode
+    let _ = disable_raw_mode();
+
+    // Parse response: \x1b]N;rgb:RRRR/GGGG/BBBB\x1b\\
+    if let Some(response) = result {
+        parse_osc_color_response(&response)
+    } else {
+        None
+    }
+}
+
+/// Query a single terminal color using OSC 4 escape sequence
+/// Returns None if the query fails or times out
+fn query_terminal_color(color_idx: usize) -> Option<(u8, u8, u8)> {
+    use std::io::stderr;
+    use crossterm::terminal::{enable_raw_mode, disable_raw_mode};
+
+    // OSC 4 ; color ; ? BEL (using ST terminator for better compatibility)
+    let query = format!("\x1b]4;{};?\x1b\\", color_idx);
+
+    // Enable raw mode to read response
+    if enable_raw_mode().is_err() {
+        return None;
+    }
+
+    // Send query to stderr (where terminal control sequences go)
+    let mut stderr = stderr();
+    if stderr.write_all(query.as_bytes()).is_err() {
+        let _ = disable_raw_mode();
+        return None;
+    }
+    if stderr.flush().is_err() {
+        let _ = disable_raw_mode();
+        return None;
+    }
+
+    // Read response with timeout
+    let result = read_osc_response(Duration::from_millis(100));
+
+    // Restore terminal mode
+    let _ = disable_raw_mode();
+
+    // Parse response: \x1b]4;N;rgb:RRRR/GGGG/BBBB\x1b\\
+    if let Some(response) = result {
+        parse_osc_color_response(&response)
+    } else {
+        None
+    }
+}
+
+/// Read OSC response from stdin with timeout
+fn read_osc_response(timeout: Duration) -> Option<String> {
+    use std::io::stdin;
+    use std::thread;
+    use std::sync::mpsc::channel;
+
+    let (tx, rx) = channel();
+
+    // Spawn thread to read response
+    thread::spawn(move || {
+        let mut stdin = stdin();
+        let mut buffer = Vec::new();
+        let mut temp = [0u8; 1];
+
+        // Read until we get ST (\x1b\\) or BEL (\x07)
+        loop {
+            if stdin.read_exact(&mut temp).is_ok() {
+                buffer.push(temp[0]);
+
+                // Check for ST terminator: ESC \
+                if buffer.len() >= 2 && buffer[buffer.len() - 2] == 0x1b && buffer[buffer.len() - 1] == b'\\' {
+                    break;
+                }
+
+                // Check for BEL terminator
+                if temp[0] == 0x07 {
+                    break;
+                }
+
+                // Safety limit
+                if buffer.len() > 1024 {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        let _ = tx.send(String::from_utf8_lossy(&buffer).to_string());
+    });
+
+    // Wait for response with timeout
+    rx.recv_timeout(timeout).ok()
+}
+
+/// Parse OSC 4 color response: rgb:RRRR/GGGG/BBBB
+fn parse_osc_color_response(response: &str) -> Option<(u8, u8, u8)> {
+    // Look for "rgb:" in the response
+    if let Some(rgb_start) = response.find("rgb:") {
+        let rgb_part = &response[rgb_start + 4..];
+
+        // Split by '/' to get R/G/B components
+        let parts: Vec<&str> = rgb_part.split('/').collect();
+        if parts.len() >= 3 {
+            // Parse hex values (they're typically 4 digits: RRRR/GGGG/BBBB)
+            // We want 8-bit values, so take the high byte
+            let r = u16::from_str_radix(parts[0].trim_end_matches(|c: char| !c.is_ascii_hexdigit()), 16).ok()?;
+            let g = u16::from_str_radix(parts[1].trim_end_matches(|c: char| !c.is_ascii_hexdigit()), 16).ok()?;
+            let b = u16::from_str_radix(parts[2].trim_end_matches(|c: char| !c.is_ascii_hexdigit()), 16).ok()?;
+
+            // Convert 16-bit to 8-bit (take high byte)
+            return Some(((r >> 8) as u8, (g >> 8) as u8, (b >> 8) as u8));
+        }
+    }
+
+    None
 }

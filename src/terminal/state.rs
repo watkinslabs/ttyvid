@@ -51,7 +51,7 @@ impl TerminalState {
             default_background: default_bg as i32,
             pending_wrap: false,
             cursor_speed: 0,
-            display_cursor: false,
+            display_cursor: true,  // Cursor visible by default (programs can hide with ESC[?25l)
             scroll: 0,
             scroll_top: 0,
             scroll_bottom: height - 1,

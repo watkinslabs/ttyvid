@@ -9,13 +9,94 @@ mod renderer;
 mod encoder;
 mod theme;
 mod assets;
+mod recorder;
 
 use input::{InputSource, AsciicastReader, StdinReader};
 use terminal::TerminalEmulator;
-use renderer::{Rasterizer, Palette, Canvas};
+use renderer::{Rasterizer, Palette, Canvas, Font, query_terminal_font};
 use encoder::{EncoderWrapper, OutputFormat};
 use theme::Theme;
 use theme::layers::{LayerRenderer, LayerImage};
+
+/// Query terminal default color (OSC 10 for fg, OSC 11 for bg)
+fn query_default_terminal_color(osc_number: u8) -> Option<u8> {
+    use std::io::{Write, Read};
+    use crossterm::terminal::{enable_raw_mode, disable_raw_mode};
+    use std::time::Duration;
+    use std::sync::mpsc::channel;
+    use std::thread;
+
+    let query = format!("\x1b]{};?\x1b\\", osc_number);
+
+    if enable_raw_mode().is_err() {
+        return None;
+    }
+
+    let mut stderr = std::io::stderr();
+    if stderr.write_all(query.as_bytes()).is_err() {
+        let _ = disable_raw_mode();
+        return None;
+    }
+    if stderr.flush().is_err() {
+        let _ = disable_raw_mode();
+        return None;
+    }
+
+    // Read response with timeout
+    let (tx, rx) = channel();
+    thread::spawn(move || {
+        let mut stdin = std::io::stdin();
+        let mut buffer = Vec::new();
+        let mut temp = [0u8; 1];
+
+        loop {
+            if stdin.read_exact(&mut temp).is_ok() {
+                buffer.push(temp[0]);
+                if buffer.len() >= 2 && buffer[buffer.len() - 2] == 0x1b && buffer[buffer.len() - 1] == b'\\' {
+                    break;
+                }
+                if temp[0] == 0x07 {
+                    break;
+                }
+                if buffer.len() > 1024 {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        let _ = tx.send(String::from_utf8_lossy(&buffer).to_string());
+    });
+
+    let response = rx.recv_timeout(Duration::from_millis(100)).ok();
+    let _ = disable_raw_mode();
+
+    // Parse rgb:RRRR/GGGG/BBBB
+    if let Some(resp) = response {
+        if let Some(rgb_start) = resp.find("rgb:") {
+            let rgb_part = &resp[rgb_start + 4..];
+            let parts: Vec<&str> = rgb_part.split('/').collect();
+            if parts.len() >= 3 {
+                if let (Ok(r), Ok(g), Ok(b)) = (
+                    u16::from_str_radix(parts[0].trim_end_matches(|c: char| !c.is_ascii_hexdigit()), 16),
+                    u16::from_str_radix(parts[1].trim_end_matches(|c: char| !c.is_ascii_hexdigit()), 16),
+                    u16::from_str_radix(parts[2].trim_end_matches(|c: char| !c.is_ascii_hexdigit()), 16),
+                ) {
+                    // Convert to 8-bit and match to standard palette
+                    let r8 = (r >> 8) as u8;
+                    let g8 = (g >> 8) as u8;
+                    let b8 = (b >> 8) as u8;
+
+                    // Simple matching to closest basic 16 color
+                    let palette = Palette::default();
+                    return Some(palette.match_color_index(r8 as i32, g8 as i32, b8 as i32));
+                }
+            }
+        }
+    }
+
+    None
+}
 
 /// Find layer file in theme directories
 fn find_layer_file(layer_file: &str) -> PathBuf {
@@ -59,7 +140,269 @@ fn find_layer_file(layer_file: &str) -> PathBuf {
 fn main() -> Result<()> {
     let args = cli::Args::parse();
 
-    println!("ttyvid version [0.1.0]\n");
+    println!("ttyvid version {}\n", env!("CARGO_PKG_VERSION"));
+
+    // Handle subcommands or legacy mode
+    match args.command {
+        Some(cli::Command::Record { ref output, ref command, max_idle, no_pause, stats }) => {
+            // Determine output formats
+            let output_formats = if !args.formats.is_empty() {
+                // Use --formats flag
+                args.formats.clone()
+            } else {
+                // Auto-detect from extension
+                let output_ext = output
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("cast");
+                vec![output_ext.to_string()]
+            };
+
+            // Get base output path (strip extension if present)
+            let base_output = output.with_extension("");
+
+            // Always record to .cast file first
+            let cast_file = base_output.with_extension("cast");
+
+            // Determine recording dimensions
+            let (rec_cols, rec_rows) = if args.clone || args.terminal_size {
+                use crossterm::terminal;
+                if let Ok((cols, rows)) = terminal::size() {
+                    eprintln!("Using terminal size: {}x{}", cols, rows);
+                    (cols, rows)
+                } else {
+                    eprintln!("Warning: Could not query terminal size, using defaults");
+                    (args.columns.unwrap_or(80) as u16, args.rows.unwrap_or(24) as u16)
+                }
+            } else {
+                (args.columns.unwrap_or(80) as u16, args.rows.unwrap_or(24) as u16)
+            };
+
+            // Configure and run recorder
+            let config = recorder::RecordConfig {
+                output: cast_file.clone(),
+                command: if command.is_empty() { None } else { Some(command.clone()) },
+                columns: rec_cols,
+                rows: rec_rows,
+                max_idle,
+                allow_pause: !no_pause,
+                show_stats: stats,  // Disabled by default, enable with --stats
+                env: Vec::new(),
+            };
+
+            let recorder = recorder::Recorder::new(config);
+            recorder.record()?;
+
+            // Generate all requested formats
+            let keep_cast = output_formats.contains(&"cast".to_string());
+            let mut generated_files = vec![];
+
+            for format in &output_formats {
+                match format.to_lowercase().as_str() {
+                    "cast" => {
+                        // Already generated
+                        generated_files.push(cast_file.clone());
+                    }
+                    "gif" => {
+                        let gif_file = base_output.with_extension("gif");
+                        eprintln!("\nConverting to GIF...");
+                        eprintln!("This may take a moment depending on recording length and frame rate.\n");
+                        convert_recording(&args, Some(cast_file.clone()), Some(gif_file.clone()))?;
+                        generated_files.push(gif_file);
+                    }
+                    #[cfg(feature = "webm")]
+                    "webm" => {
+                        let webm_file = base_output.with_extension("webm");
+                        eprintln!("\nConverting to WebM...");
+                        eprintln!("This may take a moment depending on recording length and frame rate.\n");
+                        convert_recording(&args, Some(cast_file.clone()), Some(webm_file.clone()))?;
+                        generated_files.push(webm_file);
+                    }
+                    "md" | "markdown" => {
+                        // Generate markdown file with embedded GIF/WebM
+                        let md_file = base_output.with_extension("md");
+                        generate_markdown(&base_output, &output_formats, &md_file)?;
+                        generated_files.push(md_file);
+                    }
+                    _ => {
+                        eprintln!("Warning: Unknown format '{}', skipping", format);
+                    }
+                }
+            }
+
+            // Clean up temporary .cast file if not requested
+            if !keep_cast && cast_file.exists() {
+                if let Err(e) = std::fs::remove_file(&cast_file) {
+                    eprintln!("Warning: Failed to remove temporary file {}: {}", cast_file.display(), e);
+                }
+            }
+
+            // Show summary
+            eprintln!("\nGenerated files:");
+            for file in &generated_files {
+                eprintln!("  ✓ {}", file.display());
+            }
+        }
+        Some(cli::Command::Convert { ref input, ref output }) => {
+            if !args.formats.is_empty() {
+                // Multiple formats requested
+                let base_output = output.with_extension("");
+                let mut generated_files = vec![];
+
+                for format in &args.formats {
+                    match format.to_lowercase().as_str() {
+                        "cast" => {
+                            // Copy the input file
+                            let cast_file = base_output.with_extension("cast");
+                            std::fs::copy(input, &cast_file)?;
+                            generated_files.push(cast_file);
+                        }
+                        "gif" => {
+                            let gif_file = base_output.with_extension("gif");
+                            eprintln!("\nConverting to GIF...");
+                            convert_recording(&args, Some(input.clone()), Some(gif_file.clone()))?;
+                            generated_files.push(gif_file);
+                        }
+                        #[cfg(feature = "webm")]
+                        "webm" => {
+                            let webm_file = base_output.with_extension("webm");
+                            eprintln!("\nConverting to WebM...");
+                            convert_recording(&args, Some(input.clone()), Some(webm_file.clone()))?;
+                            generated_files.push(webm_file);
+                        }
+                        "md" | "markdown" => {
+                            let md_file = base_output.with_extension("md");
+                            generate_markdown(&base_output, &args.formats, &md_file)?;
+                            generated_files.push(md_file);
+                        }
+                        _ => {
+                            eprintln!("Warning: Unknown format '{}', skipping", format);
+                        }
+                    }
+                }
+
+                eprintln!("\nGenerated files:");
+                for file in &generated_files {
+                    eprintln!("  ✓ {}", file.display());
+                }
+            } else {
+                // Single format (legacy behavior)
+                convert_recording(&args, Some(input.clone()), Some(output.clone()))?;
+            }
+        }
+        Some(cli::Command::ListFonts { system, bitmap }) => {
+            // If neither flag specified, show both
+            let show_system = system || (!system && !bitmap);
+            let show_bitmap = bitmap || (!system && !bitmap);
+
+            if show_system {
+                println!("System TrueType Fonts:");
+                println!("====================\n");
+                match renderer::TrueTypeFont::list_system_fonts() {
+                    Ok(fonts) => {
+                        if fonts.is_empty() {
+                            println!("  No system fonts found");
+                        } else {
+                            for (i, font) in fonts.iter().enumerate() {
+                                println!("  {:3}. {}", i + 1, font);
+                            }
+                            println!("\n  Total: {} fonts", fonts.len());
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error listing system fonts: {}", e);
+                    }
+                }
+
+                println!("\nUsage: ttyvid convert -i input.cast -o output.gif --system-font \"Font Name\"");
+                println!("       ttyvid convert -i input.cast -o output.gif --system-font /path/to/font.ttf");
+                println!("       ttyvid convert -i input.cast -o output.gif --system-font monospace  (system default)");
+                println!();
+            }
+
+            if show_bitmap {
+                if show_system {
+                    println!();
+                }
+                println!("Embedded Bitmap Fonts:");
+                println!("======================\n");
+                let font_names = renderer::Font::available_fonts();
+                for (i, font) in font_names.iter().enumerate() {
+                    println!("  {:3}. {}", i + 1, font);
+                }
+                println!("\n  Total: {} fonts", font_names.len());
+                println!("\nUsage: ttyvid convert -i input.cast -o output.gif --font FontName");
+            }
+        }
+        None => {
+            // Legacy mode: no subcommand, behave like convert
+            if !args.formats.is_empty() && args.output.is_some() {
+                // Multiple formats in legacy mode
+                let output = args.output.as_ref().unwrap();
+                let base_output = output.with_extension("");
+                let mut generated_files = vec![];
+
+                for format in &args.formats {
+                    match format.to_lowercase().as_str() {
+                        "cast" => {
+                            if let Some(ref input) = args.input {
+                                let cast_file = base_output.with_extension("cast");
+                                std::fs::copy(input, &cast_file)?;
+                                generated_files.push(cast_file);
+                            }
+                        }
+                        "gif" => {
+                            let gif_file = base_output.with_extension("gif");
+                            eprintln!("\nConverting to GIF...");
+                            convert_recording(&args, args.input.clone(), Some(gif_file.clone()))?;
+                            generated_files.push(gif_file);
+                        }
+                        #[cfg(feature = "webm")]
+                        "webm" => {
+                            let webm_file = base_output.with_extension("webm");
+                            eprintln!("\nConverting to WebM...");
+                            convert_recording(&args, args.input.clone(), Some(webm_file.clone()))?;
+                            generated_files.push(webm_file);
+                        }
+                        "md" | "markdown" => {
+                            let md_file = base_output.with_extension("md");
+                            generate_markdown(&base_output, &args.formats, &md_file)?;
+                            generated_files.push(md_file);
+                        }
+                        _ => {
+                            eprintln!("Warning: Unknown format '{}', skipping", format);
+                        }
+                    }
+                }
+
+                eprintln!("\nGenerated files:");
+                for file in &generated_files {
+                    eprintln!("  ✓ {}", file.display());
+                }
+            } else {
+                // Single format legacy mode
+                convert_recording(&args, args.input.clone(), args.output.clone())?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn convert_recording(args: &cli::Args, input: Option<PathBuf>, output: Option<PathBuf>) -> Result<()> {
+    // Query terminal size if requested
+    let (term_cols, term_rows) = if args.clone || args.terminal_size {
+        use crossterm::terminal;
+        if let Ok((cols, rows)) = terminal::size() {
+            eprintln!("Using terminal size: {}x{}", cols, rows);
+            (Some(cols as usize), Some(rows as usize))
+        } else {
+            eprintln!("Warning: Could not query terminal size, using defaults");
+            (None, None)
+        }
+    } else {
+        (None, None)
+    };
 
     // Determine output format
     let output_format = if let Some(ref fmt_str) = args.format {
@@ -81,7 +424,7 @@ fn main() -> Result<()> {
         };
 
         // Warn if explicit format doesn't match output file extension
-        if let Some(ref path) = args.output {
+        if let Some(ref path) = output {
             if let Some(detected_format) = OutputFormat::from_path(path) {
                 if detected_format != explicit_format {
                     eprintln!("Warning: Specified format '{:?}' doesn't match output file extension '.{}'",
@@ -92,7 +435,7 @@ fn main() -> Result<()> {
         }
 
         explicit_format
-    } else if let Some(ref path) = args.output {
+    } else if let Some(ref path) = output {
         // Auto-detect from output file extension
         OutputFormat::from_path(path).unwrap_or(OutputFormat::Gif)
     } else {
@@ -101,7 +444,7 @@ fn main() -> Result<()> {
     };
 
     // Determine output path
-    let output_path = if let Some(path) = args.output {
+    let output_path = if let Some(path) = output {
         path
     } else {
         // Auto-generate filename with proper extension
@@ -120,7 +463,7 @@ fn main() -> Result<()> {
     };
 
     // Read input events
-    let mut input: Box<dyn InputSource> = if let Some(ref path) = args.input {
+    let mut input_source: Box<dyn InputSource> = if let Some(ref path) = input {
         Box::new(AsciicastReader::new(path)?)
     } else {
         Box::new(StdinReader::new(
@@ -129,11 +472,12 @@ fn main() -> Result<()> {
         ))
     };
 
-    let mut events = input.read_events()?;
-    let metadata = input.metadata();
+    let mut events = input_source.read_events()?;
+    let metadata = input_source.metadata();
 
-    let width = args.columns.unwrap_or(metadata.width);
-    let height = args.rows.unwrap_or(metadata.height);
+    // Determine dimensions: terminal size > explicit args > metadata
+    let width = term_cols.or(args.columns).unwrap_or(metadata.width);
+    let height = term_rows.or(args.rows).unwrap_or(metadata.height);
 
     // Load theme
     let theme = {
@@ -147,7 +491,7 @@ fn main() -> Result<()> {
         }
     };
 
-    println!(" - input: {}", args.input.as_deref().unwrap_or(std::path::Path::new("stdin")).display());
+    println!(" - input: {}", input.as_deref().unwrap_or(std::path::Path::new("stdin")).display());
     println!(" - output: {}", output_path.display());
     println!(" - format: {:?}", output_format);
     println!(" - theme: {}", theme.name);
@@ -174,7 +518,7 @@ fn main() -> Result<()> {
         0.0
     };
     let frame_rate = args.fps.clamp(1, 100);
-    let mut frame_count = ((duration * frame_rate as f64).ceil() as usize).max(1);
+    let frame_count = ((duration * frame_rate as f64).ceil() as usize).max(1);
 
     // Add trailer frames if requested (1.5 seconds holding the final state)
     let trailer_frame_count = if args.trailer {
@@ -191,13 +535,59 @@ fn main() -> Result<()> {
         println!(" - trailer: {} frames (1.5s)", trailer_frame_count);
     }
 
-    // Create terminal emulator with theme colors
-    let default_fg = theme.default_foreground;
-    let default_bg = theme.default_background;
+    // Query terminal colors early if needed (gets palette + default colors in one go)
+    let (palette, term_default_fg, term_default_bg) = if args.clone || args.terminal_colors {
+        eprintln!("Querying terminal for colors...");
+        // This queries the full palette AND default fg/bg colors
+        let (pal, fg, bg) = Palette::from_terminal();
+        eprintln!("Terminal colors detected: fg={:?}, bg={:?}", fg, bg);
+        (Some(pal), fg, bg)
+    } else if let Some(ref theme_palette) = theme.palette {
+        // Use theme's custom palette
+        (Some(Palette::from_theme(theme_palette)), None, None)
+    } else {
+        // Fall back to default
+        (Some(Palette::default()), None, None)
+    };
+
+    // Create terminal emulator with colors (terminal colors override theme)
+    let default_fg = term_default_fg.unwrap_or(theme.default_foreground);
+    let default_bg = term_default_bg.unwrap_or(theme.default_background);
+    eprintln!("Using colors: fg={}, bg={}", default_fg, default_bg);
     let mut terminal = TerminalEmulator::new(width, height, !args.no_autowrap, default_fg, default_bg);
 
-    // Create rasterizer
-    let rasterizer = Rasterizer::new(args.font.as_deref());
+    // Create rasterizer with font
+    let rasterizer = if let Some(ref system_font) = args.system_font {
+        // User explicitly requested a system font
+        eprintln!("Loading system font: {} at size {}", system_font, args.font_size);
+        if let Some(ttf_font) = Font::from_system_font(system_font, args.font_size) {
+            eprintln!("Successfully loaded system font (cell size: {}x{})", ttf_font.width(), ttf_font.height());
+            Rasterizer::with_font(ttf_font)
+        } else {
+            eprintln!("Failed to load system font, falling back to embedded bitmap font");
+            Rasterizer::new(args.font.as_deref())
+        }
+    } else if args.clone {
+        // Try to detect and load terminal font
+        if let Some(font_name) = query_terminal_font() {
+            eprintln!("Terminal font detected: {}", font_name);
+            // Try to load as TrueType font with user-specified size
+            if let Some(ttf_font) = Font::from_system_font(&font_name, args.font_size) {
+                eprintln!("Loaded TrueType font: {} (cell size: {}x{})", font_name, ttf_font.width(), ttf_font.height());
+                Rasterizer::with_font(ttf_font)
+            } else {
+                eprintln!("Could not load font '{}', falling back to embedded font", font_name);
+                Rasterizer::new(args.font.as_deref())
+            }
+        } else {
+            eprintln!("Could not detect terminal font, using embedded font");
+            Rasterizer::new(args.font.as_deref())
+        }
+    } else {
+        // Use specified bitmap font or default
+        Rasterizer::new(args.font.as_deref())
+    };
+
     let (term_pixel_width, term_pixel_height) = rasterizer.canvas_size(width, height);
 
     // Apply theme padding
@@ -239,12 +629,17 @@ fn main() -> Result<()> {
         }
     }
 
-    // Create encoder - use theme palette if available
-    let palette = if let Some(ref theme_palette) = theme.palette {
-        Palette::from_theme(theme_palette)
-    } else {
-        Palette::default()
-    };
+    // Use the palette we already queried earlier (don't query again!)
+    let palette = palette.unwrap(); // Safe because we always set Some() above
+
+    // Use terminal background for canvas fill (overrides theme background)
+    let background_color = term_default_bg.unwrap_or(theme.background);
+    eprintln!("Canvas background color index: {}", background_color);
+
+    // Don't use transparency in final GIF - transparency is handled during layer compositing
+    // The final output should be fully opaque with the theme background color
+    let transparent_index = None;
+
     let mut encoder = EncoderWrapper::new(
         &output_path,
         pixel_width,
@@ -254,6 +649,7 @@ fn main() -> Result<()> {
         args.r#loop,
         frame_rate,
         args.quality.clamp(0, 100),
+        transparent_index,
     )?;
 
     // Process frames
@@ -274,16 +670,25 @@ fn main() -> Result<()> {
         }
         // During trailer frames, terminal state remains at final state
 
-        // Render current terminal state
-        let term_canvas = rasterizer.render_grid(terminal.grid());
+        // Render current terminal state with cursor if enabled
+        let term_canvas = if !args.no_cursor && terminal.state().display_cursor {
+            let (cursor_x, cursor_y) = terminal.state().cursor_get_position();
+            rasterizer.render_grid_with_cursor(
+                terminal.grid(),
+                cursor_x as usize,
+                cursor_y as usize
+            )
+        } else {
+            rasterizer.render_grid(terminal.grid())
+        };
 
         // Create final canvas with padding
         let mut canvas = Canvas::new(pixel_width, pixel_height, &palette);
 
-        // Fill with theme background color
+        // Fill with background color (terminal bg overrides theme bg)
         for y in 0..pixel_height {
             for x in 0..pixel_width {
-                canvas.set_pixel(x, y, theme.background);
+                canvas.set_pixel(x, y, background_color);
             }
         }
 
@@ -349,6 +754,47 @@ fn main() -> Result<()> {
     encoder.finish()?;
 
     println!("\n✓ {:?} created: {}", output_format, output_path.display());
+
+    Ok(())
+}
+
+fn generate_markdown(base_path: &PathBuf, formats: &[String], md_file: &PathBuf) -> Result<()> {
+    use std::fs::File;
+    use std::io::Write;
+
+    let mut content = String::new();
+
+    // Get the base filename for the title
+    let title = base_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("Terminal Recording");
+
+    content.push_str(&format!("# {}\n\n", title));
+
+    // Embed the GIF or WebM if available
+    if formats.contains(&"gif".to_string()) {
+        let gif_name = base_path.with_extension("gif");
+        let gif_filename = gif_name.file_name().and_then(|n| n.to_str()).unwrap_or("output.gif");
+        content.push_str(&format!("![{}]({})\n\n", title, gif_filename));
+    } else if formats.contains(&"webm".to_string()) {
+        let webm_name = base_path.with_extension("webm");
+        let webm_filename = webm_name.file_name().and_then(|n| n.to_str()).unwrap_or("output.webm");
+        content.push_str(&format!("<video src=\"{}\" controls></video>\n\n", webm_filename));
+    }
+
+    // Add link to .cast file if available
+    if formats.contains(&"cast".to_string()) {
+        let cast_name = base_path.with_extension("cast");
+        let cast_filename = cast_name.file_name().and_then(|n| n.to_str()).unwrap_or("output.cast");
+        content.push_str(&format!("## Files\n\n"));
+        content.push_str(&format!("- [Asciinema recording]({})\n", cast_filename));
+    }
+
+    content.push_str(&format!("\n---\n\nGenerated with [ttyvid](https://github.com/ndonald2/ttyvid) v{}\n", env!("CARGO_PKG_VERSION")));
+
+    let mut file = File::create(md_file)?;
+    file.write_all(content.as_bytes())?;
 
     Ok(())
 }

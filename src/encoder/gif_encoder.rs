@@ -11,18 +11,22 @@ pub struct GifEncoder {
     width: u16,
     height: u16,
     previous_frame: Option<Vec<u8>>,
+    transparent_index: Option<u8>,
+    global_palette: Vec<u8>, // Store global palette RGB values
 }
 
 impl GifEncoder {
-    pub fn new(path: &Path, width: usize, height: usize, palette: &Palette, loop_count: u16) -> Result<Self> {
+    pub fn new(path: &Path, width: usize, height: usize, palette: &Palette, loop_count: u16, transparent_index: Option<u8>) -> Result<Self> {
         let file = File::create(path)?;
         let writer = BufWriter::new(file);
+
+        let global_palette = palette.colors().to_vec();
 
         let mut encoder = Encoder::new(
             writer,
             width as u16,
             height as u16,
-            palette.colors(),
+            &global_palette,
         )?;
 
         // Set loop count (0 = infinite)
@@ -37,39 +41,79 @@ impl GifEncoder {
             width: width as u16,
             height: height as u16,
             previous_frame: None,
+            transparent_index,
+            global_palette,
         })
+    }
+
+    fn create_local_palette(&self, frame_data: &[u8]) -> (Vec<u8>, Vec<u8>) {
+        // Collect unique color indices used in this frame
+        let mut color_set = std::collections::HashSet::new();
+        for &idx in frame_data {
+            color_set.insert(idx);
+        }
+
+        // Sort for consistent output
+        let mut unique_colors: Vec<u8> = color_set.into_iter().collect();
+        unique_colors.sort_unstable();
+
+        // Create mapping from global index to local index
+        let mut index_map = vec![0u8; 256];
+        for (local_idx, &global_idx) in unique_colors.iter().enumerate() {
+            index_map[global_idx as usize] = local_idx as u8;
+        }
+
+        // Build local palette (RGB values from global palette)
+        let mut local_palette = Vec::with_capacity(unique_colors.len() * 3);
+        for &global_idx in &unique_colors {
+            let rgb_idx = (global_idx as usize) * 3;
+            local_palette.extend_from_slice(&self.global_palette[rgb_idx..rgb_idx + 3]);
+        }
+
+        // Remap frame data to local indices
+        let remapped_data: Vec<u8> = frame_data.iter()
+            .map(|&idx| index_map[idx as usize])
+            .collect();
+
+        (local_palette, remapped_data)
     }
 
     pub fn add_frame(&mut self, canvas: &Canvas, delay_centiseconds: u16) -> Result<()> {
         let data = canvas.data();
 
-        // Compute difference region if we have a previous frame
-        let (left, top, width, height, frame_data) = if let Some(prev) = &self.previous_frame {
+        let (left, top, width, height, frame_data) = if let Some(ref prev) = self.previous_frame {
+            // Compute diff - only encode changed region
             self.compute_diff(prev, data)
         } else {
-            // First frame - use entire canvas
+            // First frame - encode everything
             (0, 0, self.width, self.height, data.to_vec())
         };
 
-        // Create and write frame
+        // Save current frame for next diff
+        self.previous_frame = Some(data.to_vec());
+
+        // Create local palette with only colors used in this frame
+        let (local_palette, remapped_data) = self.create_local_palette(&frame_data);
+
+        // Create frame with remapped data
         let mut frame = Frame::from_indexed_pixels(
             width,
             height,
-            frame_data,
-            None, // No local palette
+            remapped_data,
+            self.transparent_index,
         );
 
         frame.delay = delay_centiseconds;
         frame.left = left;
         frame.top = top;
 
-        // Set disposal method to keep previous frame
+        // Set local palette on the frame
+        frame.palette = Some(local_palette);
+
+        // Use Keep disposal - previous frame content remains where not overwritten
         frame.dispose = gif::DisposalMethod::Keep;
 
         self.encoder.write_frame(&frame)?;
-
-        // Store current frame for next diff
-        self.previous_frame = Some(data.to_vec());
 
         Ok(())
     }

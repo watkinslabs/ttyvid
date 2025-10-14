@@ -62,10 +62,11 @@ impl EncoderWrapper {
         loop_count: u16,
         fps: u32,
         quality: u8,
+        transparent_index: Option<u8>,
     ) -> Result<Self> {
         match format {
             OutputFormat::Gif => {
-                Ok(EncoderWrapper::Gif(GifEncoder::new(path, width, height, palette, loop_count)?))
+                Ok(EncoderWrapper::Gif(GifEncoder::new(path, width, height, palette, loop_count, transparent_index)?))
             }
             #[cfg(feature = "webm")]
             OutputFormat::Webm => {

@@ -40,10 +40,10 @@ layers:
   file: layers/x.gif
   mode: scale
   dst_bounds:
-    left: 20
-    top: 50
-    right: 140
-    bottom: 170
+    left: -140
+    top: -140
+    right: -20
+    bottom: -20
   animation:
     speed: 1.0
     loop: true

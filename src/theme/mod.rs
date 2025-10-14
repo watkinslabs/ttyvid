@@ -336,9 +336,14 @@ impl Theme {
         Ok(theme)
     }
 
-    /// Load theme by name, searching filesystem then embedded themes
+    /// Load theme by name, searching embedded themes first, then filesystem
     pub fn load_by_name(name: &str) -> Result<Self> {
-        // Try filesystem locations first
+        // Try embedded themes first (compiled into binary)
+        if let Ok(theme) = Self::load_builtin(name) {
+            return Ok(theme);
+        }
+
+        // Fall back to filesystem locations if not embedded
         for base_path in Self::theme_search_paths() {
             let theme_path = base_path.join(format!("{}.yaml", name));
             if theme_path.exists() {
@@ -346,8 +351,7 @@ impl Theme {
             }
         }
 
-        // Fall back to embedded themes
-        Self::load_builtin(name)
+        anyhow::bail!("Theme '{}' not found in embedded themes or filesystem", name)
     }
 
     /// Get theme search paths in order of priority
@@ -376,6 +380,7 @@ impl Theme {
             "default" => include_str!("../../themes/default.yaml"),
             "windows7" => include_str!("../../themes/windows7.yaml"),
             "fdwm" => include_str!("../../themes/fdwm.yaml"),
+            "fdwm-x" => include_str!("../../themes/fdwm-x.yaml"),
             "simple" => include_str!("../../themes/simple.yaml"),
             "bar" => include_str!("../../themes/bar.yaml"),
             "default-2bit" => include_str!("../../themes/default-2bit.yaml"),
@@ -384,7 +389,7 @@ impl Theme {
             "mac" => include_str!("../../themes/mac.yaml"),
             "opensource" => include_str!("../../themes/opensource.yaml"),
             "scripted" => include_str!("../../themes/scripted.yaml"),
-            _ => anyhow::bail!("Unknown builtin theme: {}. Available themes: default, windows7, fdwm, simple, bar, game, mac, opensource, scripted", name),
+            _ => anyhow::bail!("Unknown builtin theme: {}. Available themes: default, windows7, fdwm, fdwm-x, simple, bar, game, mac, opensource, scripted", name),
         };
 
         let theme: Theme = serde_yaml::from_str(yaml)

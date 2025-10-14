@@ -127,16 +127,27 @@ impl LayerImage {
                     let dest_y = y + frame_top;
 
                     if dest_x < width && dest_y < height {
-                        // Alpha blend the pixel
-                        let bg = canvas.get_pixel(dest_x, dest_y);
-                        let alpha = pixel[3] as f32 / 255.0;
-                        let blended = Rgba([
-                            ((pixel[0] as f32 * alpha) + (bg[0] as f32 * (1.0 - alpha))) as u8,
-                            ((pixel[1] as f32 * alpha) + (bg[1] as f32 * (1.0 - alpha))) as u8,
-                            ((pixel[2] as f32 * alpha) + (bg[2] as f32 * (1.0 - alpha))) as u8,
-                            255,
-                        ]);
-                        canvas.put_pixel(dest_x, dest_y, blended);
+                        // Alpha blend the pixel - preserve transparency
+                        let alpha = pixel[3];
+
+                        if alpha == 0 {
+                            // Fully transparent - leave background as-is (transparent)
+                            canvas.put_pixel(dest_x, dest_y, Rgba([0, 0, 0, 0]));
+                        } else if alpha == 255 {
+                            // Fully opaque - use pixel directly
+                            canvas.put_pixel(dest_x, dest_y, *pixel);
+                        } else {
+                            // Partial transparency - blend but preserve alpha
+                            let bg = canvas.get_pixel(dest_x, dest_y);
+                            let alpha_f = alpha as f32 / 255.0;
+                            let blended = Rgba([
+                                ((pixel[0] as f32 * alpha_f) + (bg[0] as f32 * (1.0 - alpha_f))) as u8,
+                                ((pixel[1] as f32 * alpha_f) + (bg[1] as f32 * (1.0 - alpha_f))) as u8,
+                                ((pixel[2] as f32 * alpha_f) + (bg[2] as f32 * (1.0 - alpha_f))) as u8,
+                                alpha.max(bg[3]), // Preserve alpha
+                            ]);
+                            canvas.put_pixel(dest_x, dest_y, blended);
+                        }
                     }
                 }
             }
@@ -220,16 +231,27 @@ impl LayerImage {
                     let dest_y = y + frame_top;
 
                     if dest_x < width && dest_y < height {
-                        // Alpha blend the pixel
-                        let bg = canvas.get_pixel(dest_x, dest_y);
-                        let alpha = pixel[3] as f32 / 255.0;
-                        let blended = Rgba([
-                            ((pixel[0] as f32 * alpha) + (bg[0] as f32 * (1.0 - alpha))) as u8,
-                            ((pixel[1] as f32 * alpha) + (bg[1] as f32 * (1.0 - alpha))) as u8,
-                            ((pixel[2] as f32 * alpha) + (bg[2] as f32 * (1.0 - alpha))) as u8,
-                            255,
-                        ]);
-                        canvas.put_pixel(dest_x, dest_y, blended);
+                        // Alpha blend the pixel - preserve transparency
+                        let alpha = pixel[3];
+
+                        if alpha == 0 {
+                            // Fully transparent - leave background as-is (transparent)
+                            canvas.put_pixel(dest_x, dest_y, Rgba([0, 0, 0, 0]));
+                        } else if alpha == 255 {
+                            // Fully opaque - use pixel directly
+                            canvas.put_pixel(dest_x, dest_y, *pixel);
+                        } else {
+                            // Partial transparency - blend but preserve alpha
+                            let bg = canvas.get_pixel(dest_x, dest_y);
+                            let alpha_f = alpha as f32 / 255.0;
+                            let blended = Rgba([
+                                ((pixel[0] as f32 * alpha_f) + (bg[0] as f32 * (1.0 - alpha_f))) as u8,
+                                ((pixel[1] as f32 * alpha_f) + (bg[1] as f32 * (1.0 - alpha_f))) as u8,
+                                ((pixel[2] as f32 * alpha_f) + (bg[2] as f32 * (1.0 - alpha_f))) as u8,
+                                alpha.max(bg[3]), // Preserve alpha
+                            ]);
+                            canvas.put_pixel(dest_x, dest_y, blended);
+                        }
                     }
                 }
             }

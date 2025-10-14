@@ -1,6 +1,6 @@
 # ttyvid
 
-Convert terminal recordings to video formats (GIF/WebM). High-performance Rust implementation with full terminal emulation and 56+ embedded classic bitmap fonts.
+Complete terminal recording and video generation tool. Record terminal sessions directly to .cast files, then convert to GIF/WebM with themes, animations, and custom fonts. High-performance Rust implementation with built-in PTY recording, full terminal emulation, TrueType font support, and 56+ embedded classic bitmap fonts.
 
 ![ttyvid demo with animated theme layers](demo-preview.gif)
 
@@ -12,13 +12,17 @@ Convert terminal recordings to video formats (GIF/WebM). High-performance Rust i
 
 ## Features
 
+- ✅ **Built-in recording** - Direct PTY-based terminal capture to .cast files
 - ✅ **Full terminal emulation** - ANSI/VT100 escape sequences
-- ✅ **Multiple output formats** - GIF and WebM (with AV1)
+- ✅ **Multiple output formats** - .cast (asciicast v2), GIF, and WebM (with AV1)
 - ✅ **56 embedded fonts** - IBM, ATI, Verite, Tandy, Phoenix, and more
+- ✅ **TrueType font support** - Load system fonts with full UTF-8 rendering
+- ✅ **Terminal cloning** - Auto-detect terminal size, colors, and font with `--clone`
+- ✅ **UTF-8 character support** - 310+ box-drawing, braille, and special characters
 - ✅ **Theme system** - Customizable layouts with layers and animations
-- ✅ **Asciicast support** - Read .cast v2 files or stdin
+- ✅ **Asciicast compatibility** - .cast files work with asciinema players
 - ✅ **Speed control** - Adjust playback speed and FPS
-- ✅ **Frame optimization** - Differencing for efficient file sizes
+- ✅ **Frame optimization** - Full frame encoding for perfect rendering
 
 ## Installation
 
@@ -31,7 +35,7 @@ cargo install ttyvid
 ### From Source
 
 ```bash
-git clone https://github.com/chris17453/ttyvid.git
+git clone https://github.com/watkinslabs/ttyvid.git
 cd ttyvid
 cargo build --release
 ```
@@ -79,45 +83,197 @@ See [mcp-server/README.md](mcp-server/README.md) for full documentation.
 
 ### Quick Start
 
+**Complete workflow:**
 ```bash
-# Record a terminal session with asciinema
-asciinema rec recording.cast
+# Step 1: Record a terminal session to .cast file
+ttyvid record demo.cast
+# ... interact with your terminal ...
+# Exit shell (Ctrl+D or 'exit') to stop recording
 
-# Convert to GIF
-ttyvid -i recording.cast -o output.gif
-
-# Convert to WebM (requires --features webm)
-ttyvid -i recording.cast -o output.webm --format webm
+# Step 2: Convert .cast to GIF or WebM
+ttyvid convert -i demo.cast -o demo.gif
 ```
+
+**Direct conversion (without recording):**
+```bash
+# Convert live terminal output via pipe
+echo "Hello World" | ttyvid convert -o hello.gif
+
+# Convert existing asciicast file
+ttyvid convert -i recording.cast -o output.gif
+```
+
+**Output formats:**
+```bash
+# .cast file - Asciicast v2 format (compatible with asciinema)
+ttyvid record output.cast
+
+# GIF - Animated GIF with themes and effects
+ttyvid convert -i recording.cast -o output.gif
+
+# WebM - AV1-encoded video (requires --features webm)
+ttyvid convert -i recording.cast -o output.webm
+```
+
+**Advanced options:**
+```bash
+# Clone your terminal appearance (auto-detect size, colors, and font)
+ttyvid convert -i recording.cast -o output.gif --clone
+
+# Use system font with UTF-8 support
+ttyvid convert -i recording.cast -o output.gif --system-font "JetBrains Mono"
+
+# Apply theme with custom settings
+ttyvid convert -i recording.cast -o output.gif --theme fdwm-x --fps 30 --speed 1.5
+```
+
+### Advanced Features
+
+#### TrueType Font Support
+
+Use system fonts instead of bitmap fonts for better UTF-8 character support:
+
+```bash
+# Use a specific system font
+ttyvid convert -i recording.cast -o output.gif --system-font "JetBrains Mono"
+
+# Use system default monospace font
+ttyvid convert -i recording.cast -o output.gif --system-font monospace
+
+# Keywords: "monospace", "default", or "system" all use system default
+ttyvid convert -i recording.cast -o output.gif --system-font default
+
+# Specify font size (in pixels, default: 16)
+ttyvid convert -i recording.cast -o output.gif --system-font monospace --font-size 20
+
+# Load font from file path
+ttyvid convert -i recording.cast -o output.gif --system-font /path/to/font.ttf
+```
+
+**List available fonts:**
+```bash
+# List all system TrueType fonts
+ttyvid list-fonts --system
+
+# List embedded bitmap fonts
+ttyvid list-fonts --bitmap
+
+# List both
+ttyvid list-fonts
+```
+
+**Font features:**
+- Full Unicode/UTF-8 rendering with proper baseline alignment
+- Automatic cell sizing based on font metrics
+- Supports font files (.ttf, .otf) or font names
+- **Note:** Use monospace fonts designed for terminals for best results
+- Non-monospace fonts will work but may not look ideal
+
+**Font fallback chain:**
+- If specified font not found, tries system default monospace
+- Finally falls back to embedded bitmap fonts
+- Supports loading from file paths or system font directories
+
+#### Terminal Cloning
+
+Clone your current terminal's appearance for authentic recordings:
+
+```bash
+# Auto-detect terminal size, colors, and font
+ttyvid convert -i recording.cast -o output.gif --clone
+
+# Just use terminal colors (with theme or bitmap font)
+ttyvid convert -i recording.cast -o output.gif --terminal-colors
+```
+
+**What gets cloned:**
+- Terminal dimensions (width × height)
+- Full 16-color palette
+- Default foreground/background colors
+- System font (with TrueType support)
+
+#### UTF-8 Character Support
+
+310+ Unicode characters supported for TUI applications like bpytop, htop, etc.:
+
+- **Box-drawing:** Single/double line, rounded corners, mixed styles
+- **Block elements:** Full, half, quarter blocks in all orientations
+- **Braille patterns:** All 256 patterns (⠀ through ⣿) for graphs
+- **Arrows and symbols:** ←↑→↓, ▲▼◀▶, •◆■□, and more
+- **Math symbols:** ≈≥≤≠±×÷°, fractions, superscripts
+
+**Rendering modes:**
+- Bitmap fonts: UTF-8 → CP437 mapping for compatibility
+- TrueType fonts: Native UTF-8 rendering with full Unicode support
+
+## Recording
+
+ttyvid includes built-in PTY-based terminal recording, eliminating the need for external tools like asciinema.
+
+### Basic Recording
+
+```bash
+# Start recording - launches your default shell
+ttyvid record output.cast
+
+# Record with custom shell
+ttyvid record output.cast --shell /bin/zsh
+
+# Record with specific dimensions
+ttyvid record output.cast --columns 120 --rows 30
+```
+
+### Recording Options
+
+```
+ttyvid record [OPTIONS] <OUTPUT>
+
+Arguments:
+  <OUTPUT>  Output .cast file path
+
+Options:
+  -s, --shell <SHELL>      Shell to execute [default: $SHELL or /bin/sh]
+  -c, --columns <COLS>     Terminal width [default: 80]
+  -r, --rows <ROWS>        Terminal height [default: 24]
+  -h, --help               Print help
+```
+
+### How Recording Works
+
+- Spawns a PTY (pseudo-terminal) with the specified shell
+- Captures all output with precise microsecond timing
+- Saves to .cast v2 format (compatible with asciinema)
+- Automatically records terminal resize events
+- Exit the shell (Ctrl+D or `exit`) to stop recording
 
 ## Usage
 
-### From stdin (pipe)
+### Convert: From stdin (pipe)
 
 ```bash
-echo -e "Hello \e[31mRed\e[0m World" | ttyvid -o hello.gif
+echo -e "Hello \e[31mRed\e[0m World" | ttyvid convert -o hello.gif
 ```
 
-### From asciicast file
+### Convert: From asciicast file
 
 ```bash
-ttyvid -i recording.cast -o output.gif
+ttyvid convert -i recording.cast -o output.gif
 ```
 
-### With custom theme and font
+### Convert: With custom theme and font
 
 ```bash
-ttyvid -i recording.cast -o output.gif \
+ttyvid convert -i recording.cast -o output.gif \
   --theme windows7 \
   --font IBM_VGA8 \
   --fps 30 \
   --speed 1.5
 ```
 
-### Advanced options
+### Convert: Advanced options
 
 ```bash
-ttyvid \
+ttyvid convert \
   --input recording.cast \
   --output output.gif \
   --theme mac \
@@ -133,14 +289,38 @@ ttyvid \
 
 The `--trailer` option adds 1.5 seconds of the final frame at the end before looping, creating a pause effect for better viewing.
 
-## Options
+## Command Reference
+
+### ttyvid record
 
 ```
+ttyvid record [OPTIONS] <OUTPUT>
+
+Arguments:
+  <OUTPUT>  Output .cast file path
+
+Options:
+  -s, --shell <SHELL>      Shell to execute [default: $SHELL or /bin/sh]
+  -c, --columns <COLS>     Terminal width [default: 80]
+  -r, --rows <ROWS>        Terminal height [default: 24]
+  -h, --help               Print help
+```
+
+### ttyvid convert
+
+```
+ttyvid convert [OPTIONS] --output <FILE>
+
 Options:
   -i, --input <FILE>          Input asciicast file (reads from stdin if not provided)
-  -o, --output <FILE>         Output GIF file
+  -o, --output <FILE>         Output file (.gif or .webm)
   -t, --theme <THEME>         Theme name or path [default: default]
-  -f, --font <FONT>           Font name
+  -f, --font <FONT>           Font name (bitmap font)
+      --system-font <FONT>    System font name, file path, or TrueType/OpenType
+                              Use "monospace", "default", or "system" for system default
+      --font-size <SIZE>      Font size in pixels for TrueType fonts [default: 16]
+      --clone                 Auto-detect terminal size, colors, and font
+      --terminal-colors       Use terminal's color palette
       --fps <FPS>             Frames per second (3-100) [default: 10]
       --speed <SPEED>         Speed multiplier [default: 1.0]
   -c, --columns <COLUMNS>     Terminal width in columns
@@ -151,9 +331,27 @@ Options:
       --trailer               Add trailer at end
       --title <TITLE>         Title text
       --no-autowrap           Disable auto line wrap
+      --no-cursor             Hide cursor in output
       --underlay <UNDERLAY>   Underlay image path
+      --quality <QUALITY>     WebM quality 0-100 [default: 50]
   -h, --help                  Print help
   -V, --version               Print version
+```
+
+### ttyvid list-fonts
+
+```
+ttyvid list-fonts [OPTIONS]
+
+Options:
+      --system                Show system TrueType fonts
+      --bitmap                Show embedded bitmap fonts
+  -h, --help                  Print help
+
+Examples:
+  ttyvid list-fonts --system      # List all system fonts
+  ttyvid list-fonts --bitmap      # List embedded bitmap fonts
+  ttyvid list-fonts               # List both
 ```
 
 ## Performance
@@ -169,19 +367,26 @@ This Rust implementation is significantly faster than the original Python/Cython
 
 ### Modules
 
-- **cli**: Command-line argument parsing (clap)
+- **cli**: Command-line argument parsing with record and convert subcommands (clap)
+- **recorder**: PTY-based terminal session recording with .cast output
 - **input**: stdin and asciicast file readers
 - **terminal**: Full VT100/ANSI terminal emulator (vte)
 - **renderer**: Text to pixel conversion with bitmap fonts
-- **encoder**: GIF encoding with LZW compression and frame differencing
-- **theme**: Theme system (simplified for MVP)
-- **assets**: Embedded fonts and themes
+- **encoder**: GIF and WebM encoding with optimizations
+- **theme**: Layer-based theme system with animations
+- **assets**: Embedded fonts, themes, and layer images
 
 ### Data Flow
 
+**Recording:**
+```
+Shell → PTY → Recorder → .cast file
+```
+
+**Converting:**
 ```
 Input (stdin/cast) → Terminal Emulator →
-Renderer → GIF Encoder → Output
+Renderer → Encoder → Output (GIF/WebM)
 ```
 
 ## Available Fonts
@@ -431,7 +636,9 @@ The theme system is fully extensible - you can mix embedded assets with custom i
 | Terminal Emulation | Custom | Full ANSI/VT100 | ✅ |
 | GIF Encoding | Custom | gif crate | ✅ |
 | WebM Encoding | N/A | rav1e (AV1) | ✅ |
-| Font Support | 50+ .fd fonts | 56 .fd fonts embedded | ✅ |
+| Font Support | 50+ .fd fonts | 56 bitmap + TrueType | ✅ |
+| UTF-8 Characters | Limited | 310+ characters | ✅ |
+| Terminal Cloning | N/A | Full (size/colors/font) | ✅ |
 | Theme System | Full with layers | Full with layers | ✅ |
 | Performance | Good | Excellent | ✅ |
 | Binary Size | N/A (Python) | ~5-8 MB | ✅ |
