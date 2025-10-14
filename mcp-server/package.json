@@ -1,5 +1,5 @@
 {
-  "name": "ttyvid-mcp",
+  "name": "@watkinslabs/ttyvid-mcp",
   "version": "0.2.0",
   "description": "MCP server for ttyvid - Convert terminal recordings to video",
   "main": "dist/index.js",

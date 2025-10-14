@@ -15,7 +15,7 @@ This MCP server lets AI assistants like Claude directly:
 ### From npm
 
 ```bash
-npm install -g ttyvid-mcp
+npm install -g @watkinslabs/ttyvid-mcp
 ```
 
 ### From source

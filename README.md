@@ -44,6 +44,11 @@ Use ttyvid directly from Claude Code and other AI assistants!
 
 **Install MCP Server:**
 ```bash
+npm install -g @watkinslabs/ttyvid-mcp
+```
+
+Or from source:
+```bash
 cd mcp-server
 npm install
 npm run build
