@@ -214,6 +214,6 @@ MIT
 
 ## Links
 
-- [ttyvid](https://github.com/chris17453/ttyvid) - The terminal video converter
+- [ttyvid](https://github.com/watkinslabs/ttyvid) - The terminal video converter
 - [MCP](https://modelcontextprotocol.io) - Model Context Protocol specification
 - [Claude Code](https://claude.com/claude-code) - AI coding assistant
