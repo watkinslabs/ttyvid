@@ -22,7 +22,7 @@ path = "src/bin/font_debug.rs"
 [features]
 default = ["webm"]
 webm = ["rav1e"]
-gpu = ["wgpu", "pollster"]
+gpu = ["wgpu", "pollster", "bytemuck"]
 
 [dependencies]
 # CLI parsing
@@ -75,8 +75,9 @@ tokio = { version = "1.40", features = ["full"] }
 async-trait = "0.1"
 
 # GPU acceleration (optional)
-wgpu = { version = "0.20", optional = true }
+wgpu = { version = "0.20", optional = true, features = ["wgsl"] }
 pollster = { version = "0.3", optional = true }
+bytemuck = { version = "1.14", optional = true, features = ["derive"] }
 
 [profile.release]
 opt-level = 3

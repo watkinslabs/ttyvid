@@ -4,6 +4,12 @@
 #[cfg(feature = "gpu")]
 use wgpu;
 
+#[cfg(feature = "gpu")]
+use wgpu::util::DeviceExt;
+
+#[cfg(feature = "gpu")]
+use bytemuck;
+
 use crate::renderer::{Canvas, Palette, Font};
 use crate::terminal::{Cell, CellFlags, Grid};
 use anyhow::{Result, Context};
@@ -23,6 +29,7 @@ struct GpuContext {
     device: wgpu::Device,
     queue: wgpu::Queue,
     compute_pipeline: wgpu::ComputePipeline,
+    bind_group_layout: wgpu::BindGroupLayout,
 }
 
 impl GpuRenderer {
@@ -93,6 +100,75 @@ impl GpuRenderer {
         ))
         .context("Failed to create GPU device")?;
 
+        // Create bind group layout
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Render Bind Group Layout"),
+            entries: &[
+                // Binding 0: grid_cells (storage buffer, read-only)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // Binding 1: font_data (storage buffer, read-only)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // Binding 2: palette (storage buffer, read-only)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // Binding 3: output (storage buffer, read-write)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // Binding 4: params (uniform buffer)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        // Create pipeline layout
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Render Pipeline Layout"),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
         // Create compute shader
         let shader_source = include_str!("shaders/render.wgsl");
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -103,7 +179,7 @@ impl GpuRenderer {
         // Create compute pipeline
         let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("ttyvid Render Pipeline"),
-            layout: None,
+            layout: Some(&pipeline_layout),
             module: &shader,
             entry_point: "main",
             compilation_options: Default::default(),
@@ -113,6 +189,7 @@ impl GpuRenderer {
             device,
             queue,
             compute_pipeline,
+            bind_group_layout,
         })
     }
 
@@ -152,15 +229,184 @@ impl GpuRenderer {
     /// GPU-accelerated rendering
     #[cfg(feature = "gpu")]
     fn render_grid_gpu(&self, grid: &Grid, ctx: &GpuContext) -> Result<Canvas> {
-        // TODO: Implement GPU compute shader rendering
-        // For now, fall back to CPU
-        // This will be implemented with:
-        // 1. Upload grid data to GPU buffer
-        // 2. Upload font/palette to GPU
-        // 3. Dispatch compute shader
-        // 4. Read back rendered pixels
+        let (canvas_width, canvas_height) = self.canvas_size(grid.width(), grid.height());
 
-        Err(anyhow::anyhow!("GPU rendering not yet implemented"))
+        // Prepare grid cell data
+        let mut cell_data = Vec::with_capacity(grid.width() * grid.height() * 4);
+        for row in 0..grid.height() {
+            for col in 0..grid.width() {
+                if let Some(cell) = grid.get_cell(col, row) {
+                    // Pack cell data as u32s
+                    let char_code = cell.character as u32;
+                    let flags = if cell.flags.contains(CellFlags::REVERSE) { 1u32 } else { 0u32 };
+
+                    cell_data.push(char_code);
+                    cell_data.push(cell.fg_color as u32);
+                    cell_data.push(cell.bg_color as u32);
+                    cell_data.push(flags);
+                } else {
+                    cell_data.extend_from_slice(&[32u32, 7u32, 0u32, 0u32]); // space, white on black
+                }
+            }
+        }
+
+        // Prepare font bitmap data
+        let cell_width = self.font.width();
+        let cell_height = self.font.height();
+        let mut font_data = Vec::with_capacity(256 * cell_width * cell_height);
+
+        for char_idx in 0u8..=255u8 {
+            let glyph = self.font.get_glyph(char_idx);
+            for pixel in glyph {
+                font_data.push(if pixel { 1u32 } else { 0u32 });
+            }
+        }
+
+        // Create GPU buffers
+        let cell_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Cell Data Buffer"),
+            contents: bytemuck::cast_slice(&cell_data),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let font_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Font Data Buffer"),
+            contents: bytemuck::cast_slice(&font_data),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        // We don't need palette on GPU, output is color indices
+        let dummy_palette = vec![0u32; 256];
+        let palette_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Palette Buffer"),
+            contents: bytemuck::cast_slice(&dummy_palette),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        // Output buffer
+        let output_size = (canvas_width * canvas_height * std::mem::size_of::<u32>()) as u64;
+        let output_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Output Buffer"),
+            size: output_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        // Params uniform buffer
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct RenderParams {
+            canvas_width: u32,
+            canvas_height: u32,
+            grid_width: u32,
+            grid_height: u32,
+            cell_width: u32,
+            cell_height: u32,
+            font_data_stride: u32,
+            padding: u32,
+        }
+
+        let params = RenderParams {
+            canvas_width: canvas_width as u32,
+            canvas_height: canvas_height as u32,
+            grid_width: grid.width() as u32,
+            grid_height: grid.height() as u32,
+            cell_width: cell_width as u32,
+            cell_height: cell_height as u32,
+            font_data_stride: (cell_width * cell_height) as u32,
+            padding: 0,
+        };
+
+        let params_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Params Buffer"),
+            contents: bytemuck::bytes_of(&params),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+        // Create bind group
+        let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Render Bind Group"),
+            layout: &ctx.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: cell_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: font_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: palette_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: output_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: params_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        // Dispatch compute shader
+        let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Render Encoder"),
+        });
+
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Render Pass"),
+                timestamp_writes: None,
+            });
+            compute_pass.set_pipeline(&ctx.compute_pipeline);
+            compute_pass.set_bind_group(0, &bind_group, &[]);
+
+            let workgroup_size = 8;
+            let dispatch_x = (canvas_width + workgroup_size - 1) / workgroup_size;
+            let dispatch_y = (canvas_height + workgroup_size - 1) / workgroup_size;
+            compute_pass.dispatch_workgroups(dispatch_x as u32, dispatch_y as u32, 1);
+        }
+
+        // Create staging buffer to read back results
+        let staging_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Staging Buffer"),
+            size: output_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        encoder.copy_buffer_to_buffer(&output_buffer, 0, &staging_buffer, 0, output_size);
+        ctx.queue.submit(std::iter::once(encoder.finish()));
+
+        // Read back results
+        let buffer_slice = staging_buffer.slice(..);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            sender.send(result).unwrap();
+        });
+
+        ctx.device.poll(wgpu::Maintain::Wait);
+        receiver.recv().context("Failed to receive buffer mapping result")??;
+
+        let data = buffer_slice.get_mapped_range();
+        let pixels: &[u32] = bytemuck::cast_slice(&data);
+
+        // Convert to Canvas
+        let mut canvas = Canvas::new(canvas_width, canvas_height, &self.palette);
+        for y in 0..canvas_height {
+            for x in 0..canvas_width {
+                let idx = y * canvas_width + x;
+                canvas.set_pixel(x, y, pixels[idx] as u8);
+            }
+        }
+
+        drop(data);
+        staging_buffer.unmap();
+
+        Ok(canvas)
     }
 
     /// CPU fallback rendering (existing implementation)
