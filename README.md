@@ -20,7 +20,7 @@ Complete terminal recording and video generation tool. Record terminal sessions 
 - ✅ **Terminal cloning** - Auto-detect terminal size, colors, and font with `--clone`
 - ✅ **UTF-8 character support** - 310+ box-drawing, braille, and special characters
 - ✅ **Theme system** - Customizable layouts with layers and animations
-- ✅ **MCP server integration** - Built-in Model Context Protocol server for AI assistants
+- ✅ **MCP server integration** - Built-in Model Context Protocol server with 11 tools for AI assistants
 - ✅ **Asciicast compatibility** - .cast files work with asciinema players
 - ✅ **Speed control** - Adjust playback speed and FPS
 - ✅ **Frame optimization** - Full frame encoding for perfect rendering
@@ -79,16 +79,58 @@ ttyvid --mcp
 ```
 
 The server runs on stdio and implements the Model Context Protocol 2025-06-18, exposing these tools:
-- `convert_recording` - Convert .cast files to GIF/WebM with full option support
-- `list_themes` - Show all available themes
-- `list_fonts` - Show all available fonts
-- `get_version` - Get ttyvid version
+
+**Core Tools:**
+- `record` - Record terminal sessions directly to .cast, GIF, or WebM
+- `convert_recording` - Convert .cast files to GIF/WebM with full customization
+  - Supports: themes, fonts (bitmap & TrueType), custom dimensions, speed control, multi-format output
+- `get_version` - Get ttyvid version information
+
+**Discovery Tools:**
+- `list_themes` - List all 10 available themes
+- `list_fonts` - List all 56+ embedded bitmap fonts
+- `list_system_fonts` - List all available system TrueType fonts (monospace recommended)
+
+**Analysis Tools:**
+- `inspect_recording` - Analyze .cast files (dimensions, duration, event count, metadata)
+- `preview_frame` - Generate single frame preview at specific timestamp
+- `preview_theme` - Generate theme preview showing color palette
+
+**Batch Tools:**
+- `batch_convert` - Convert multiple .cast files in one operation
+
+**Platform Optimization:**
+- `optimize_for_platform` - Auto-optimize for Twitter, YouTube, LinkedIn, TikTok, GitHub, Instagram, Slack, DEV.to
+  - Platform-specific presets (dimensions, FPS, themes, compression)
+  - **Time control:** `fit_to_time` - automatically speed up video to fit target duration
+  - **Trimming:** `start_time` / `end_time` - trim video to specific time range
+  - One command for perfect social media output
 
 **Use it naturally in Claude:**
 ```
-User: "Convert my recording.cast to GIF with fdwm-x theme at 30fps"
+User: "List available system fonts"
+Claude: [Uses list_system_fonts tool]
+Claude: "Found 116 fonts including Liberation Mono, Noto Sans Mono, Source Code Pro..."
+
+User: "Convert my recording.cast to GIF with fdwm-x theme at 30fps using JetBrains Mono"
 Claude: [Automatically converts using ttyvid MCP tool]
-Claude: "Done! Created output.gif with fdwm-x theme at 30fps"
+Claude: "Done! Created output.gif with fdwm-x theme at 30fps using JetBrains Mono font"
+
+User: "What's in this demo.cast file?"
+Claude: [Uses inspect_recording tool]
+Claude: "This recording is 80x24, runs for 45.2 seconds, and has 1,234 events"
+
+User: "Optimize this for Twitter"
+Claude: [Uses optimize_for_platform with platform='twitter']
+Claude: "Optimized for Twitter! Created square 680x680 GIF at 10fps with simple theme. Ready to tweet!"
+
+User: "Fit this 60 second demo into 30 seconds for Instagram"
+Claude: [Uses optimize_for_platform with platform='instagram', fit_to_time=30]
+Claude: "Optimized for Instagram! Sped up 2.0x to fit 60s into 30s, square 1080x1080 at 12fps."
+
+User: "Trim the first 5 seconds and last 10 seconds, then optimize for YouTube"
+Claude: [Uses optimize_for_platform with platform='youtube', start_time=5.0, end_time=-10]
+Claude: "Optimized for YouTube! Trimmed to 5.0s-50.0s (45s total), 720p at 15fps."
 ```
 
 ### Quick Start
@@ -372,14 +414,55 @@ ttyvid --mcp
 Start the Model Context Protocol (MCP) server for AI assistant integration.
 The server runs on stdio and implements MCP version 2025-06-18.
 
-Available MCP Tools:
-  - convert_recording     Convert .cast files to GIF/WebM
-  - list_themes          List all available themes
-  - list_fonts           List all available fonts
+Available MCP Tools (11 total):
+
+Core Tools:
+  - record                Record terminal sessions to .cast/GIF/WebM
+  - convert_recording     Convert .cast files to GIF/WebM with full options
+                         (themes, fonts, dimensions, speed, multi-format)
   - get_version          Get ttyvid version information
+
+Discovery Tools:
+  - list_themes          List all 10 available themes
+  - list_fonts           List all 56+ embedded bitmap fonts
+  - list_system_fonts    List all system TrueType fonts
+
+Analysis Tools:
+  - inspect_recording    Analyze .cast metadata (dimensions, duration, events)
+  - preview_frame        Generate single frame preview at timestamp
+  - preview_theme        Generate theme preview with color palette
+
+Batch Tools:
+  - batch_convert        Convert multiple .cast files at once
+
+Platform Optimization:
+  - optimize_for_platform  Auto-optimize for social media platforms
+                          Platforms: twitter, youtube, linkedin, tiktok,
+                                    github, instagram, slack, devto
+                          Parameters:
+                            - input: Path to .cast file (required)
+                            - output: Output file path (required)
+                            - platform: Target platform name (required)
+                            - theme: Custom theme override (optional)
+                            - fit_to_time: Target duration in seconds (optional)
+                                          Automatically speeds up video to fit
+                            - start_time: Trim start in seconds (optional)
+                            - end_time: Trim end in seconds (optional)
+                          Example: {"platform": "twitter"} → 680x680, 10fps, simple theme
 
 Example:
   ttyvid --mcp            # Start MCP server on stdio
+
+Integration:
+  Add to ~/.config/claude/mcp.json:
+  {
+    "mcpServers": {
+      "ttyvid": {
+        "command": "ttyvid",
+        "args": ["--mcp"]
+      }
+    }
+  }
 ```
 
 ## Performance

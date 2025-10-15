@@ -22,6 +22,7 @@ path = "src/bin/font_debug.rs"
 [features]
 default = ["webm"]
 webm = ["rav1e"]
+gpu = ["wgpu"]
 
 [dependencies]
 # CLI parsing
@@ -72,6 +73,9 @@ chrono = "0.4"
 rust-mcp-sdk = { version = "0.7", features = ["server", "stdio", "macros"] }
 tokio = { version = "1.40", features = ["full"] }
 async-trait = "0.1"
+
+# GPU acceleration (optional)
+wgpu = { version = "0.20", optional = true }
 
 [profile.release]
 opt-level = 3
