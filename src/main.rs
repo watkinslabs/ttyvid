@@ -14,7 +14,11 @@ mod mcp_server;
 
 use input::{InputSource, AsciicastReader, StdinReader};
 use terminal::TerminalEmulator;
-use renderer::{Rasterizer, Palette, Canvas, Font, query_terminal_font};
+use renderer::{Palette, Canvas, Font, query_terminal_font, RenderBackend};
+#[cfg(feature = "gpu")]
+use renderer::GpuRenderer;
+#[cfg(not(feature = "gpu"))]
+use renderer::Rasterizer;
 use encoder::{EncoderWrapper, OutputFormat};
 use theme::Theme;
 use theme::layers::{LayerRenderer, LayerImage};
@@ -571,9 +575,40 @@ fn convert_recording(args: &cli::Args, input: Option<PathBuf>, output: Option<Pa
     eprintln!("Using colors: fg={}, bg={}", default_fg, default_bg);
     let mut terminal = TerminalEmulator::new(width, height, !args.no_autowrap, default_fg, default_bg);
 
-    // Create rasterizer with font
+    // Create rasterizer with font (GPU-accelerated if compiled with --features gpu)
+    #[cfg(feature = "gpu")]
+    let rasterizer = {
+        let font = if let Some(ref system_font) = args.system_font {
+            eprintln!("Loading system font: {} at size {}", system_font, args.font_size);
+            if let Some(ttf_font) = Font::from_system_font(system_font, args.font_size) {
+                eprintln!("Successfully loaded system font (cell size: {}x{})", ttf_font.width(), ttf_font.height());
+                ttf_font
+            } else {
+                eprintln!("Failed to load system font, falling back to embedded bitmap font");
+                Font::load(args.font.as_deref())
+            }
+        } else if args.clone {
+            if let Some(font_name) = query_terminal_font() {
+                eprintln!("Terminal font detected: {}", font_name);
+                if let Some(ttf_font) = Font::from_system_font(&font_name, args.font_size) {
+                    eprintln!("Loaded TrueType font: {} (cell size: {}x{})", font_name, ttf_font.width(), ttf_font.height());
+                    ttf_font
+                } else {
+                    eprintln!("Could not load font '{}', falling back to embedded font", font_name);
+                    Font::load(args.font.as_deref())
+                }
+            } else {
+                eprintln!("Could not detect terminal font, using embedded font");
+                Font::load(args.font.as_deref())
+            }
+        } else {
+            Font::load(args.font.as_deref())
+        };
+        GpuRenderer::new(font, palette.as_ref().unwrap().clone())
+    };
+
+    #[cfg(not(feature = "gpu"))]
     let rasterizer = if let Some(ref system_font) = args.system_font {
-        // User explicitly requested a system font
         eprintln!("Loading system font: {} at size {}", system_font, args.font_size);
         if let Some(ttf_font) = Font::from_system_font(system_font, args.font_size) {
             eprintln!("Successfully loaded system font (cell size: {}x{})", ttf_font.width(), ttf_font.height());
@@ -583,10 +618,8 @@ fn convert_recording(args: &cli::Args, input: Option<PathBuf>, output: Option<Pa
             Rasterizer::new(args.font.as_deref())
         }
     } else if args.clone {
-        // Try to detect and load terminal font
         if let Some(font_name) = query_terminal_font() {
             eprintln!("Terminal font detected: {}", font_name);
-            // Try to load as TrueType font with user-specified size
             if let Some(ttf_font) = Font::from_system_font(&font_name, args.font_size) {
                 eprintln!("Loaded TrueType font: {} (cell size: {}x{})", font_name, ttf_font.width(), ttf_font.height());
                 Rasterizer::with_font(ttf_font)
@@ -599,7 +632,6 @@ fn convert_recording(args: &cli::Args, input: Option<PathBuf>, output: Option<Pa
             Rasterizer::new(args.font.as_deref())
         }
     } else {
-        // Use specified bitmap font or default
         Rasterizer::new(args.font.as_deref())
     };
 

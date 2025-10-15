@@ -1,6 +1,7 @@
 use std::io::{Write, Read};
 use std::time::Duration;
 
+#[derive(Clone)]
 pub struct Palette {
     colors: Vec<u8>, // RGB triplets
 }

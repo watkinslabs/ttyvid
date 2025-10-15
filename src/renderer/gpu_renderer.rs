@@ -15,6 +15,7 @@ pub struct GpuRenderer {
     font: Font,
     palette: Palette,
     fallback_to_cpu: bool,
+    has_warned_fallback: std::sync::atomic::AtomicBool,
 }
 
 #[cfg(feature = "gpu")]
@@ -37,6 +38,7 @@ impl GpuRenderer {
                         font,
                         palette,
                         fallback_to_cpu: false,
+                        has_warned_fallback: std::sync::atomic::AtomicBool::new(false),
                     }
                 }
                 Err(e) => {
@@ -47,6 +49,7 @@ impl GpuRenderer {
                         font,
                         palette,
                         fallback_to_cpu: true,
+                        has_warned_fallback: std::sync::atomic::AtomicBool::new(true),
                     }
                 }
             }
@@ -58,6 +61,7 @@ impl GpuRenderer {
                 font,
                 palette,
                 fallback_to_cpu: true,
+                has_warned_fallback: std::sync::atomic::AtomicBool::new(true),
             }
         }
     }
@@ -132,7 +136,10 @@ impl GpuRenderer {
                 match self.render_grid_gpu(grid, ctx) {
                     Ok(canvas) => return canvas,
                     Err(e) => {
-                        eprintln!("⚠️  GPU rendering failed: {}, falling back to CPU", e);
+                        // Only warn once about GPU fallback
+                        if !self.has_warned_fallback.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                            eprintln!("⚠️  GPU rendering failed: {}, falling back to CPU", e);
+                        }
                     }
                 }
             }
