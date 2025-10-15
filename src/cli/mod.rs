@@ -106,6 +106,10 @@ pub struct Args {
     /// Generate multiple formats (comma-separated: cast,gif,webm,md)
     #[arg(long, global = true, value_delimiter = ',')]
     pub formats: Vec<String>,
+
+    /// Start MCP (Model Context Protocol) server
+    #[arg(long)]
+    pub mcp: bool,
 }
 
 #[derive(Subcommand, Debug)]

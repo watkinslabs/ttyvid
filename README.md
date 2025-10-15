@@ -20,6 +20,7 @@ Complete terminal recording and video generation tool. Record terminal sessions 
 - ✅ **Terminal cloning** - Auto-detect terminal size, colors, and font with `--clone`
 - ✅ **UTF-8 character support** - 310+ box-drawing, braille, and special characters
 - ✅ **Theme system** - Customizable layouts with layers and animations
+- ✅ **MCP server integration** - Built-in Model Context Protocol server for AI assistants
 - ✅ **Asciicast compatibility** - .cast files work with asciinema players
 - ✅ **Speed control** - Adjust playback speed and FPS
 - ✅ **Frame optimization** - Full frame encoding for perfect rendering
@@ -44,42 +45,51 @@ The binary will be at `target/release/ttyvid`.
 
 ### MCP Integration (Model Context Protocol)
 
-Use ttyvid directly from Claude Code and other AI assistants!
-
-**Install MCP Server:**
-```bash
-npm install -g @watkinslabs/ttyvid-mcp
-```
-
-Or from source:
-```bash
-cd mcp-server
-npm install
-npm run build
-npm link
-```
+Use ttyvid directly from Claude Code and other AI assistants! The MCP server is built directly into ttyvid - no separate installation needed.
 
 **Configure Claude Code:**
 
-Add to your MCP settings:
+Add to your MCP settings (e.g., `~/.config/claude/mcp.json`):
 ```json
 {
   "mcpServers": {
     "ttyvid": {
-      "command": "ttyvid-mcp"
+      "command": "ttyvid",
+      "args": ["--mcp"]
     }
   }
 }
 ```
 
-**Use it naturally:**
+Or if installed via cargo:
+```json
+{
+  "mcpServers": {
+    "ttyvid": {
+      "command": "/path/to/ttyvid",
+      "args": ["--mcp"]
+    }
+  }
+}
+```
+
+**Start MCP server manually (for testing):**
+```bash
+ttyvid --mcp
+```
+
+The server runs on stdio and implements the Model Context Protocol 2025-06-18, exposing these tools:
+- `convert_recording` - Convert .cast files to GIF/WebM with full option support
+- `list_themes` - Show all available themes
+- `list_fonts` - Show all available fonts
+- `get_version` - Get ttyvid version
+
+**Use it naturally in Claude:**
 ```
 User: "Convert my recording.cast to GIF with fdwm-x theme at 30fps"
 Claude: [Automatically converts using ttyvid MCP tool]
 Claude: "Done! Created output.gif with fdwm-x theme at 30fps"
 ```
-
-See [mcp-server/README.md](mcp-server/README.md) for full documentation.
 
 ### Quick Start
 
@@ -354,6 +364,24 @@ Examples:
   ttyvid list-fonts               # List both
 ```
 
+### ttyvid --mcp
+
+```
+ttyvid --mcp
+
+Start the Model Context Protocol (MCP) server for AI assistant integration.
+The server runs on stdio and implements MCP version 2025-06-18.
+
+Available MCP Tools:
+  - convert_recording     Convert .cast files to GIF/WebM
+  - list_themes          List all available themes
+  - list_fonts           List all available fonts
+  - get_version          Get ttyvid version information
+
+Example:
+  ttyvid --mcp            # Start MCP server on stdio
+```
+
 ## Performance
 
 This Rust implementation is significantly faster than the original Python/Cython version:
@@ -375,6 +403,7 @@ This Rust implementation is significantly faster than the original Python/Cython
 - **encoder**: GIF and WebM encoding with optimizations
 - **theme**: Layer-based theme system with animations
 - **assets**: Embedded fonts, themes, and layer images
+- **mcp_server**: Model Context Protocol server for AI assistant integration
 
 ### Data Flow
 

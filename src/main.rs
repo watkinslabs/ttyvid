@@ -10,6 +10,7 @@ mod encoder;
 mod theme;
 mod assets;
 mod recorder;
+mod mcp_server;
 
 use input::{InputSource, AsciicastReader, StdinReader};
 use terminal::TerminalEmulator;
@@ -139,6 +140,15 @@ fn find_layer_file(layer_file: &str) -> PathBuf {
 
 fn main() -> Result<()> {
     let args = cli::Args::parse();
+
+    // Check for MCP server mode first
+    if args.mcp {
+        // Start MCP server using tokio runtime
+        let runtime = tokio::runtime::Runtime::new()?;
+        return runtime.block_on(async {
+            mcp_server::start_mcp_server().await
+        });
+    }
 
     println!("ttyvid version {}\n", env!("CARGO_PKG_VERSION"));
 

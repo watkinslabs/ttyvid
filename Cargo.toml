@@ -3,12 +3,12 @@ name = "ttyvid"
 version = "0.2.0"
 edition = "2021"
 authors = ["Chris Watkins <chris@watkinslabs.com>"]
-description = "Convert terminal recordings to video (GIF/WebM) with embedded fonts and themes"
+description = "Convert terminal recordings to video (GIF/WebM) with embedded fonts, themes, and MCP server for AI assistants"
 license = "MIT"
 repository = "https://github.com/watkinslabs/ttyvid"
 homepage = "https://github.com/watkinslabs/ttyvid"
 readme = "README.md"
-keywords = ["terminal", "asciinema", "gif", "video", "recording"]
+keywords = ["terminal", "asciinema", "gif", "video", "mcp"]
 categories = ["command-line-utilities", "multimedia::video"]
 
 [[bin]]
@@ -67,6 +67,11 @@ directories = "5.0"
 portable-pty = "0.8"
 crossterm = "0.28"
 chrono = "0.4"
+
+# MCP server
+rust-mcp-sdk = { version = "0.7", features = ["server", "stdio", "macros"] }
+tokio = { version = "1.40", features = ["full"] }
+async-trait = "0.1"
 
 [profile.release]
 opt-level = 3

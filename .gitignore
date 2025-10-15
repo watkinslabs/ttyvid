@@ -21,3 +21,6 @@ build_test/
 
 # Logs
 *.log
+
+# Old npm-based MCP server (replaced with integrated Rust implementation)
+/mcp-server/
