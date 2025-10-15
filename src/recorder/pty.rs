@@ -39,8 +39,19 @@ impl PtyRecorder {
             }
             builder
         } else {
-            // Spawn user's shell
-            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+            // Spawn user's shell - cross-platform defaults
+            let shell = std::env::var("SHELL").unwrap_or_else(|_| {
+                #[cfg(windows)]
+                {
+                    // On Windows, use cmd.exe or PowerShell
+                    std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
+                }
+                #[cfg(not(windows))]
+                {
+                    // On Unix-like systems, default to sh (always available)
+                    "/bin/sh".to_string()
+                }
+            });
             CommandBuilder::new(shell)
         };
 

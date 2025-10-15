@@ -108,11 +108,16 @@ fn find_layer_file(layer_file: &str) -> PathBuf {
     }
 
     // Search in theme directories
-    let search_paths = vec![
+    let mut search_paths = vec![
         PathBuf::from("themes"),
-        PathBuf::from("/usr/share/ttyvid/themes"),
-        PathBuf::from("/usr/local/share/ttyvid/themes"),
     ];
+
+    // Add Unix-specific system paths
+    #[cfg(not(windows))]
+    {
+        search_paths.push(PathBuf::from("/usr/share/ttyvid/themes"));
+        search_paths.push(PathBuf::from("/usr/local/share/ttyvid/themes"));
+    }
 
     // Add user directories
     if let Some(proj_dirs) = directories::ProjectDirs::from("", "", "ttyvid") {

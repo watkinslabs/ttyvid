@@ -361,15 +361,18 @@ impl Theme {
         // Current directory (for development)
         paths.push(PathBuf::from("themes"));
 
-        // User data directory
+        // User data directory (cross-platform)
         if let Some(proj_dirs) = directories::ProjectDirs::from("", "", "ttyvid") {
             paths.push(proj_dirs.data_dir().join("themes"));
             paths.push(proj_dirs.config_dir().join("themes"));
         }
 
-        // System-wide directories
-        paths.push(PathBuf::from("/usr/share/ttyvid/themes"));
-        paths.push(PathBuf::from("/usr/local/share/ttyvid/themes"));
+        // System-wide directories (Unix-like systems only)
+        #[cfg(not(windows))]
+        {
+            paths.push(PathBuf::from("/usr/share/ttyvid/themes"));
+            paths.push(PathBuf::from("/usr/local/share/ttyvid/themes"));
+        }
 
         paths
     }
