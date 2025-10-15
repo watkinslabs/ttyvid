@@ -22,7 +22,7 @@ Complete terminal recording and video generation tool. Record terminal sessions 
 - ✅ **Theme system** - Customizable layouts with layers and animations
 - ✅ **MCP server integration** - Built-in Model Context Protocol server with 11 tools for AI assistants
 - ✅ **Platform optimization** - One-command optimization for Twitter, YouTube, TikTok, etc. with time controls
-- ✅ **Optional GPU acceleration** - wgpu support for faster rendering (opt-in via `--features gpu`)
+- ✅ **GPU acceleration** - wgpu support for dramatically faster rendering with automatic CPU fallback
 - ✅ **Asciicast compatibility** - .cast files work with asciinema players
 - ✅ **Speed control** - Adjust playback speed and FPS
 - ✅ **Frame optimization** - Full frame encoding for perfect rendering
@@ -767,28 +767,31 @@ layers:
 
 The theme system is fully extensible - you can mix embedded assets with custom images, create complex multi-layer compositions, and animate individual components independently for professional-looking terminal recordings.
 
-## GPU Acceleration (Optional)
+## GPU Acceleration
 
-ttyvid includes **optional GPU acceleration** using wgpu for dramatically faster frame rendering with GPU batch processing.
+ttyvid includes **GPU acceleration by default** using wgpu for dramatically faster frame rendering with GPU batch processing.
 
-### Enable GPU Support
+### Installation
 
 ```bash
-# Install with GPU support
-cargo install ttyvid --features gpu
+# Default installation includes GPU support
+cargo install ttyvid
 
-# Build from source with GPU
-cargo build --release --features gpu
+# Build from source (includes GPU by default)
+cargo build --release
+
+# CPU-only build (opt-out of GPU for minimal binary)
+cargo install ttyvid --no-default-features --features webm
 ```
 
 ### How It Works
 
 - **GPU Batch Rendering**: Renders all frames in a single GPU operation with minimal CPU↔GPU syncs
 - **Automatic Chunking**: Intelligently splits large frame counts to respect GPU buffer limits
-- **Automatic Fallback**: Uses CPU if GPU unavailable or initialization fails
+- **Automatic CPU Fallback**: Seamlessly uses CPU if GPU unavailable or initialization fails
 - **No External Dependencies**: wgpu compiles directly into the binary
 - **Cross-Platform**: Works on Windows (DX12), macOS (Metal), Linux (Vulkan)
-- **Opt-in**: Default build is CPU-only for maximum compatibility
+- **Enabled by Default**: GPU support included in standard installation with transparent fallback
 
 ### Performance Gains
 
@@ -840,7 +843,7 @@ Both CPU and GPU modes feature enhanced progress display:
 | UTF-8 Characters | Limited | 310+ characters | ✅ |
 | Terminal Cloning | N/A | Full (size/colors/font) | ✅ |
 | Theme System | Full with layers | Full with layers | ✅ |
-| GPU Acceleration | N/A | Optional (wgpu batch) | ✅ |
+| GPU Acceleration | N/A | Default (wgpu batch) | ✅ |
 | Progress Tracking | Basic | ETA + Total Time | ✅ |
 | Performance | Good | Excellent | ✅ |
 | Binary Size | N/A (Python) | ~5-8 MB | ✅ |

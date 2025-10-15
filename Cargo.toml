@@ -20,7 +20,7 @@ name = "font_debug"
 path = "src/bin/font_debug.rs"
 
 [features]
-default = ["webm"]
+default = ["webm", "gpu"]
 webm = ["rav1e"]
 gpu = ["wgpu", "pollster", "bytemuck"]
 
