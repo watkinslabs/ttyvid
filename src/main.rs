@@ -712,7 +712,7 @@ fn convert_recording(args: &cli::Args, input: Option<PathBuf>, output: Option<Pa
     let use_batch_rendering = false;
 
     // PASS 1: Collect all grid snapshots
-    let term_canvases = if use_batch_rendering {
+    let term_canvases: Vec<Canvas> = if use_batch_rendering {
         let mut grids = Vec::with_capacity(total_frame_count);
         let mut event_idx = 0;
 
