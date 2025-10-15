@@ -107,10 +107,27 @@ impl WebmEncoder {
 
         self.rgb_to_yuv(&rgb_data, &mut frame);
 
-        self.encoder.send_frame(frame)
-            .map_err(|e| anyhow::anyhow!("Failed to send frame to encoder: {:?}", e))?;
+        // Try to send frame - handle LimitReached by draining packets first
+        loop {
+            match self.encoder.send_frame(frame.clone()) {
+                Ok(_) => break,
+                Err(EncoderStatus::EnoughData) => {
+                    // Encoder buffer full, drain some packets before retrying
+                    self.drain_packets()?;
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!("Failed to send frame to encoder: {:?}", e));
+                }
+            }
+        }
 
-        // Collect and write packets immediately
+        // Drain available packets (don't need to drain all immediately)
+        self.drain_packets()?;
+
+        Ok(())
+    }
+
+    fn drain_packets(&mut self) -> Result<()> {
         loop {
             match self.encoder.receive_packet() {
                 Ok(packet) => {
@@ -140,7 +157,6 @@ impl WebmEncoder {
                 }
             }
         }
-
         Ok(())
     }
 

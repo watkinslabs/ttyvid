@@ -1,5 +1,6 @@
 use super::Palette;
 
+#[derive(Clone)]
 pub struct Canvas {
     data: Vec<u8>,
     width: usize,

@@ -699,34 +699,98 @@ fn convert_recording(args: &cli::Args, input: Option<PathBuf>, output: Option<Pa
         transparent_index,
     )?;
 
-    // Process frames
+    // GPU BATCH MODE: Process frames in two passes
+    // Pass 1: Collect all Grid snapshots (~14MB for 282 frames)
+    // Pass 2: Batch render ALL grids at once (ONE GPU sync!)
+
     let frame_duration = 1.0 / frame_rate as f64;
     let delay_centiseconds = (100.0 / frame_rate as f64).round() as u16;
 
-    let mut event_idx = 0;
+    #[cfg(feature = "gpu")]
+    let use_batch_rendering = rasterizer.is_gpu_available();
+    #[cfg(not(feature = "gpu"))]
+    let use_batch_rendering = false;
 
+    // PASS 1: Collect all grid snapshots
+    let term_canvases = if use_batch_rendering {
+        let mut grids = Vec::with_capacity(total_frame_count);
+        let mut event_idx = 0;
+
+        for frame_num in 0..total_frame_count {
+            let current_time = frame_num as f64 * frame_duration;
+
+            // Process all events up to current time (only for non-trailer frames)
+            if frame_num < frame_count {
+                while event_idx < events.len() && events[event_idx].timestamp <= current_time {
+                    terminal.feed_bytes(&events[event_idx].data);
+                    event_idx += 1;
+                }
+            }
+
+            // Clone the grid snapshot (Grid is cheap to clone - just Vec<Cell> where Cell is Copy)
+            grids.push(terminal.grid().clone());
+        }
+
+        // PASS 2: GPU BATCH RENDER (ONE sync for ALL frames!)
+        #[cfg(feature = "gpu")]
+        {
+            let batch_result = rasterizer.render_grids_batch(&grids);
+            match batch_result {
+                Ok(canvases) => {
+                    canvases
+                }
+                Err(e) => {
+                    eprintln!("GPU batch render failed: {}, falling back to frame-by-frame", e);
+                    // Fallback: render each grid individually
+                    grids.iter().map(|grid| {
+                        if !args.no_cursor && terminal.state().display_cursor {
+                            let (cursor_x, cursor_y) = terminal.state().cursor_get_position();
+                            rasterizer.render_grid_with_cursor(grid, cursor_x as usize, cursor_y as usize)
+                        } else {
+                            rasterizer.render_grid(grid)
+                        }
+                    }).collect()
+                }
+            }
+        }
+        #[cfg(not(feature = "gpu"))]
+        {
+            vec![] // Won't be used
+        }
+    } else {
+        // CPU MODE: Render frame-by-frame as before
+        vec![] // We'll render in the loop below
+    };
+
+    // PASS 3: Composite with layers and encode
+    let start_time = std::time::Instant::now();
+    let mut event_idx = 0;
     for frame_num in 0..total_frame_count {
         let current_time = frame_num as f64 * frame_duration;
 
-        // Process all events up to current time (only for non-trailer frames)
-        if frame_num < frame_count {
-            while event_idx < events.len() && events[event_idx].timestamp <= current_time {
-                terminal.feed_bytes(&events[event_idx].data);
-                event_idx += 1;
-            }
-        }
-        // During trailer frames, terminal state remains at final state
-
-        // Render current terminal state with cursor if enabled
-        let term_canvas = if !args.no_cursor && terminal.state().display_cursor {
-            let (cursor_x, cursor_y) = terminal.state().cursor_get_position();
-            rasterizer.render_grid_with_cursor(
-                terminal.grid(),
-                cursor_x as usize,
-                cursor_y as usize
-            )
+        // Get or render terminal canvas
+        let term_canvas = if use_batch_rendering {
+            // Use pre-rendered canvas from batch
+            term_canvases[frame_num].clone()
         } else {
-            rasterizer.render_grid(terminal.grid())
+            // CPU path: process events and render frame-by-frame
+            if frame_num < frame_count {
+                while event_idx < events.len() && events[event_idx].timestamp <= current_time {
+                    terminal.feed_bytes(&events[event_idx].data);
+                    event_idx += 1;
+                }
+            }
+
+            if !args.no_cursor && terminal.state().display_cursor {
+                let (cursor_x, cursor_y) = terminal.state().cursor_get_position();
+                rasterizer.render_grid_with_cursor(
+                    terminal.grid(),
+                    cursor_x as usize,
+                    cursor_y as usize
+                )
+            } else {
+                rasterizer.render_grid(terminal.grid())
+            }
         };
 
         // Create final canvas with padding
@@ -777,19 +841,36 @@ fn convert_recording(args: &cli::Args, input: Option<PathBuf>, output: Option<Pa
         // Add frame to GIF
         encoder.add_frame(&canvas, delay_centiseconds)?;
 
-        // Progress indicator
+        // Progress indicator with ETA
         let percent = ((frame_num + 1) as f64 / total_frame_count as f64 * 100.0) as usize;
         let status = if frame_num >= frame_count {
             format!("[TRAILER {}/{}]", frame_num - frame_count + 1, trailer_frame_count)
         } else {
             format!("{} of {:.2}s", (current_time as f32).min(duration as f32), duration)
         };
-        print!("\r  {} {}% Frame: {}/{} {} FPS       ",
+
+        // Calculate ETA
+        let elapsed = start_time.elapsed().as_secs_f64();
+        let eta_str = if frame_num > 0 {
+            let frames_remaining = total_frame_count - (frame_num + 1);
+            let seconds_per_frame = elapsed / (frame_num + 1) as f64;
+            let eta_seconds = frames_remaining as f64 * seconds_per_frame;
+            if eta_seconds < 60.0 {
+                format!("ETA: {:.1}s", eta_seconds)
+            } else {
+                format!("ETA: {:.1}m", eta_seconds / 60.0)
+            }
+        } else {
+            "ETA: --".to_string()
+        };
+
+        print!("\r  {} {}% Frame: {}/{} {} FPS {}       ",
             status,
             percent,
             frame_num + 1,
             total_frame_count,
-            frame_rate
+            frame_rate,
+            eta_str
         );
         use std::io::Write;
         std::io::stdout().flush()?;
@@ -800,7 +881,16 @@ fn convert_recording(args: &cli::Args, input: Option<PathBuf>, output: Option<Pa
     // Finish encoding
     encoder.finish()?;
 
-    println!("\n✓ {:?} created: {}", output_format, output_path.display());
+    let total_time = start_time.elapsed();
+    let time_str = if total_time.as_secs() < 60 {
+        format!("{:.1}s", total_time.as_secs_f64())
+    } else {
+        let minutes = total_time.as_secs() / 60;
+        let seconds = total_time.as_secs() % 60;
+        format!("{}m {}s", minutes, seconds)
+    };
+
+    println!("\n✓ {:?} created: {} (total time: {})", output_format, output_path.display(), time_str);
 
     Ok(())
 }

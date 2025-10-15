@@ -1,6 +1,6 @@
 [package]
 name = "ttyvid"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 authors = ["Chris Watkins <chris@watkinslabs.com>"]
 description = "Convert terminal recordings to video (GIF/WebM) with embedded fonts, themes, and MCP server for AI assistants"

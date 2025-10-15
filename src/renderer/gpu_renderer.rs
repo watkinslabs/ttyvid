@@ -57,7 +57,7 @@ impl GpuRenderer {
         {
             match Self::init_gpu(&font, &palette) {
                 Ok(gpu_context) => {
-                    eprintln!("✅ GPU acceleration enabled (wgpu)");
+                    eprintln!("GPU acceleration enabled (wgpu)");
                     Self {
                         gpu_context: Some(gpu_context),
                         font,
@@ -67,8 +67,8 @@ impl GpuRenderer {
                     }
                 }
                 Err(e) => {
-                    eprintln!("⚠️  GPU initialization failed: {}", e);
-                    eprintln!("   Falling back to CPU rendering");
+                    eprintln!("GPU initialization failed: {}", e);
+                    eprintln!("Falling back to CPU rendering");
                     Self {
                         gpu_context: None,
                         font,
@@ -261,7 +261,7 @@ impl GpuRenderer {
                     Err(e) => {
                         // Only warn once about GPU fallback
                         if !self.has_warned_fallback.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                            eprintln!("⚠️  GPU rendering failed: {}, falling back to CPU", e);
+                            eprintln!("GPU rendering failed: {}, falling back to CPU", e);
                         }
                     }
                 }
@@ -273,22 +273,39 @@ impl GpuRenderer {
     }
 
     /// BATCH RENDER: Process multiple grids at once (GPU ONLY - eliminates sync overhead)
+    /// Automatically chunks to fit GPU buffer limits
     #[cfg(feature = "gpu")]
     pub fn render_grids_batch(&self, grids: &[Grid]) -> Result<Vec<Canvas>> {
         if grids.is_empty() {
             return Ok(Vec::new());
         }
 
-        // Try GPU batch rendering
+        // GPU buffer binding limit: 128MB (max_storage_buffer_binding_size)
+        // Calculate max frames per batch to stay under limit
+        let (canvas_width, canvas_height) = self.canvas_size(grids[0].width(), grids[0].height());
+        let bytes_per_frame = canvas_width * canvas_height * std::mem::size_of::<u32>();
+        let max_buffer_size = 100 * 1024 * 1024; // 100MB to be safe (limit is 128MB)
+        let max_frames_per_batch = (max_buffer_size / bytes_per_frame).max(1);
+
+        // Try GPU batch rendering in chunks
         if let Some(ref ctx) = self.gpu_context {
-            match self.render_grids_batch_gpu(grids, ctx) {
-                Ok(canvases) => return Ok(canvases),
-                Err(e) => {
-                    if !self.has_warned_fallback.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                        eprintln!("⚠️  GPU batch rendering failed: {}, falling back to CPU", e);
+            let mut all_canvases = Vec::with_capacity(grids.len());
+
+            for (_chunk_idx, chunk) in grids.chunks(max_frames_per_batch).enumerate() {
+                match self.render_grids_batch_gpu(chunk, ctx) {
+                    Ok(mut canvases) => {
+                        all_canvases.append(&mut canvases);
+                    }
+                    Err(e) => {
+                        if !self.has_warned_fallback.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                            eprintln!("GPU batch rendering failed: {}, falling back to CPU", e);
+                        }
+                        return Ok(grids.iter().map(|grid| self.render_grid_cpu(grid)).collect());
                     }
                 }
             }
+
+            return Ok(all_canvases);
         }
 
         // CPU fallback - render each grid individually
@@ -309,11 +326,15 @@ impl GpuRenderer {
         let grid_width = grids[0].width();
         let grid_height = grids[0].height();
 
-        eprintln!("🚀 GPU BATCH MODE: Rendering {} frames at once!", num_frames);
-
-        // Prepare ALL frames' cell data at once
+        // Prepare ALL frames' cell data at once (with 256-byte alignment padding)
         let cells_per_frame = grid_width * grid_height * 4;
-        let mut all_cell_data = Vec::with_capacity(num_frames * cells_per_frame);
+        let bytes_per_frame = cells_per_frame * 4; // u32 = 4 bytes
+        let alignment = 256;
+        let aligned_bytes_per_frame = ((bytes_per_frame + alignment - 1) / alignment) * alignment;
+        let aligned_cells_per_frame = aligned_bytes_per_frame / 4;
+        let padding_cells = aligned_cells_per_frame - cells_per_frame;
+
+        let mut all_cell_data = Vec::with_capacity(num_frames * aligned_cells_per_frame);
 
         for grid in grids {
             for row in 0..grid_height {
@@ -330,6 +351,8 @@ impl GpuRenderer {
                     }
                 }
             }
+            // Add padding for 256-byte alignment
+            all_cell_data.extend(std::iter::repeat(0u32).take(padding_cells));
         }
 
         // Create MEGA cell buffer for all frames
@@ -428,10 +451,10 @@ impl GpuRenderer {
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        // Slice the cell buffer for this frame
+                        // Slice the cell buffer for this frame (aligned offset!)
                         resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                             buffer: &cell_buffer,
-                            offset: (frame_idx * cells_per_frame * 4) as u64,
+                            offset: (frame_idx * aligned_bytes_per_frame) as u64,
                             size: Some(std::num::NonZeroU64::new((cells_per_frame * 4) as u64).unwrap()),
                         }),
                     },
@@ -496,7 +519,6 @@ impl GpuRenderer {
         ctx.queue.submit(std::iter::once(encoder.finish()));
 
         // ONE sync point for ALL frames!
-        eprintln!("⏳ Syncing GPU→CPU (ONE sync for {} frames)...", num_frames);
         let buffer_slice = staging_buffer.slice(..);
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
@@ -528,7 +550,6 @@ impl GpuRenderer {
         drop(data);
         staging_buffer.unmap();
 
-        eprintln!("✅ GPU batch rendering complete!");
         Ok(canvases)
     }
 
