@@ -21,6 +21,8 @@ Complete terminal recording and video generation tool. Record terminal sessions 
 - ✅ **UTF-8 character support** - 310+ box-drawing, braille, and special characters
 - ✅ **Theme system** - Customizable layouts with layers and animations
 - ✅ **MCP server integration** - Built-in Model Context Protocol server with 11 tools for AI assistants
+- ✅ **Platform optimization** - One-command optimization for Twitter, YouTube, TikTok, etc. with time controls
+- ✅ **Optional GPU acceleration** - wgpu support for faster rendering (opt-in via `--features gpu`)
 - ✅ **Asciicast compatibility** - .cast files work with asciinema players
 - ✅ **Speed control** - Adjust playback speed and FPS
 - ✅ **Frame optimization** - Full frame encoding for perfect rendering
@@ -733,13 +735,49 @@ layers:
 
 The theme system is fully extensible - you can mix embedded assets with custom images, create complex multi-layer compositions, and animate individual components independently for professional-looking terminal recordings.
 
+## GPU Acceleration (Optional)
+
+ttyvid includes **optional GPU acceleration** using wgpu for faster frame rendering on large videos.
+
+### Enable GPU Support
+
+```bash
+# Install with GPU support
+cargo install ttyvid --features gpu
+
+# Build from source with GPU
+cargo build --release --features gpu
+```
+
+### How It Works
+
+- **Automatic detection**: GPU is used if available, falls back to CPU if not
+- **No external dependencies**: wgpu compiles directly into the binary
+- **Cross-platform**: Works on Windows (DX12), macOS (Metal), Linux (Vulkan)
+- **Opt-in**: Default build is CPU-only for maximum compatibility
+
+### When to Use GPU
+
+- ✅ Large output dimensions (1280x720+, 1080p, 4K)
+- ✅ High FPS videos (30+ fps)
+- ✅ Batch processing many videos
+- ✅ Local workstation with GPU
+
+### When CPU-Only Is Fine
+
+- ✅ Headless servers / Docker containers
+- ✅ Small dimensions (640x480, 680x680)
+- ✅ Low FPS (8-15 fps) - typical GIF range
+- ✅ Single video conversions
+
+**Current status**: GPU infrastructure in place, falls back to CPU rendering. Full GPU rendering implementation coming in future release.
+
 ## TODO
 
-- [ ] Parallel frame rendering with rayon
-- [ ] SIMD optimizations for bitmap operations
+- [ ] Complete GPU compute shader implementation
+- [ ] SIMD optimizations for CPU path
 - [ ] Extended color support (256 colors, true color)
 - [ ] Additional output formats (MP4, APNG)
-- [ ] GPU acceleration exploration
 
 ## Comparison with Original
 

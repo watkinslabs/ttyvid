@@ -22,7 +22,7 @@ path = "src/bin/font_debug.rs"
 [features]
 default = ["webm"]
 webm = ["rav1e"]
-gpu = ["wgpu"]
+gpu = ["wgpu", "pollster"]
 
 [dependencies]
 # CLI parsing
@@ -76,6 +76,7 @@ async-trait = "0.1"
 
 # GPU acceleration (optional)
 wgpu = { version = "0.20", optional = true }
+pollster = { version = "0.3", optional = true }
 
 [profile.release]
 opt-level = 3

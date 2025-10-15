@@ -3,10 +3,16 @@ mod canvas;
 mod colors;
 mod truetype_font;
 
+#[cfg(feature = "gpu")]
+mod gpu_renderer;
+
 pub use font::Font;
 pub use canvas::Canvas;
 pub use colors::Palette;
 pub use truetype_font::{TrueTypeFont, query_terminal_font};
+
+#[cfg(feature = "gpu")]
+pub use gpu_renderer::GpuRenderer;
 
 use crate::terminal::{Cell, CellFlags, Grid};
 use rayon::prelude::*;
@@ -133,5 +139,50 @@ impl Rasterizer {
     /// Render a title string at the specified position with size multiplier
     pub fn render_title(&self, canvas: &mut Canvas, x: i32, y: i32, text: &str, fg_color: u8, bg_color: u8, size: f32) {
         self.font.render_string(canvas, x, y, text, fg_color, bg_color, size);
+    }
+}
+
+/// Create a renderer with automatic GPU/CPU selection
+/// When compiled with --features gpu, attempts to use GPU and falls back to CPU
+/// When compiled without gpu feature, always uses CPU
+#[cfg(feature = "gpu")]
+pub fn create_renderer_auto(font_name: Option<&str>) -> Box<dyn RenderBackend> {
+    let font = Font::load(font_name);
+    let palette = Palette::default();
+
+    // Try GPU first, automatically falls back to CPU if GPU unavailable
+    Box::new(GpuRenderer::new(font, palette))
+}
+
+#[cfg(not(feature = "gpu"))]
+pub fn create_renderer_auto(font_name: Option<&str>) -> Box<dyn RenderBackend> {
+    let font = Font::load(font_name);
+    Box::new(Rasterizer::new(font_name))
+}
+
+/// Trait for render backends (CPU or GPU)
+pub trait RenderBackend {
+    fn render_grid(&self, grid: &Grid) -> Canvas;
+    fn render_grid_with_cursor(&self, grid: &Grid, cursor_x: usize, cursor_y: usize) -> Canvas;
+    fn canvas_size(&self, cols: usize, rows: usize) -> (usize, usize);
+    fn render_title(&self, canvas: &mut Canvas, x: i32, y: i32, text: &str, fg_color: u8, bg_color: u8, size: f32);
+}
+
+// Implement RenderBackend for CPU Rasterizer
+impl RenderBackend for Rasterizer {
+    fn render_grid(&self, grid: &Grid) -> Canvas {
+        self.render_grid(grid)
+    }
+
+    fn render_grid_with_cursor(&self, grid: &Grid, cursor_x: usize, cursor_y: usize) -> Canvas {
+        self.render_grid_with_cursor(grid, cursor_x, cursor_y)
+    }
+
+    fn canvas_size(&self, cols: usize, rows: usize) -> (usize, usize) {
+        self.canvas_size(cols, rows)
+    }
+
+    fn render_title(&self, canvas: &mut Canvas, x: i32, y: i32, text: &str, fg_color: u8, bg_color: u8, size: f32) {
+        self.render_title(canvas, x, y, text, fg_color, bg_color, size)
     }
 }
