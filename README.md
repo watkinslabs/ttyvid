@@ -246,6 +246,37 @@ ttyvid convert -i recording.cast -o output.gif --terminal-colors
 - Default foreground/background colors
 - System font (with TrueType support)
 
+#### Color Support
+
+ttyvid supports full 256-color terminal palettes with automatic terminal color detection:
+
+**256-Color Palette:**
+- **System colors (0-15)**: Standard ANSI colors (black, red, green, yellow, blue, magenta, cyan, white + bright variants)
+- **Color cube (16-231)**: 6×6×6 RGB color cube for extended color support
+- **Grayscale (232-255)**: 24-level grayscale ramp for smooth gradients
+
+**Color modes:**
+```bash
+# Use theme's predefined palette
+ttyvid convert -i recording.cast -o output.gif --theme fdwm-x
+
+# Query and use your terminal's actual colors
+ttyvid convert -i recording.cast -o output.gif --terminal-colors
+
+# Clone terminal appearance (includes colors, size, and font)
+ttyvid convert -i recording.cast -o output.gif --clone
+```
+
+**Terminal color querying:**
+- Automatically detects your terminal's 16 ANSI colors
+- Queries default foreground/background colors via OSC sequences
+- Falls back to standard palette if querying fails
+- Works with most modern terminal emulators
+
+**Implementation:**
+- `src/renderer/colors.rs:60-108` - Full 256-color palette with system/cube/grayscale
+- `src/renderer/colors.rs:19-58` - Live terminal color querying via OSC 4/10/11
+
 #### UTF-8 Character Support
 
 310+ Unicode characters supported for TUI applications like bpytop, htop, etc.:
@@ -795,9 +826,8 @@ Both CPU and GPU modes feature enhanced progress display:
 ## TODO
 
 - [ ] SIMD optimizations for CPU path
-- [ ] Extended color support (256 colors, true color)
+- [ ] True color (24-bit RGB) support
 - [ ] Additional output formats (MP4, APNG)
-- [ ] GPU acceleration for layer compositing
 
 ## Comparison with Original
 
