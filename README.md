@@ -331,6 +331,49 @@ Options:
 - Automatically records terminal resize events
 - Exit the shell (Ctrl+D or `exit`) to stop recording
 
+### Recording Python Scripts
+
+Python uses **buffered output** by default, which can cause issues with terminal recording. Understanding Python's buffering behavior is essential for successful recordings.
+
+**Python Buffering Modes:**
+- **Line-buffered** (when stdout is a TTY): Flushes on newline `\n` → Works perfectly ✅
+- **Fully-buffered** (no newlines): Holds all output until program exits → Causes problems ❌
+
+**Example - Works Fine:**
+```python
+# Line-buffered: newlines trigger output
+for i in range(5):
+    print(f"Frame {i}")  # Has \n at end
+    time.sleep(0.5)
+# ✅ Each frame recorded at 0.5s intervals
+```
+
+**Example - Gets Buffered:**
+```python
+# Fully-buffered: no newlines
+for i in range(5):
+    print(f"Frame {i}", end='')  # No \n!
+    time.sleep(0.5)
+# ❌ All output compressed into single event at exit
+```
+
+**Workarounds (no code changes needed):**
+
+```bash
+# Option 1: Use --python-unbuffered flag (easiest!)
+ttyvid record output.cast --python-unbuffered -- python3 script.py
+
+# Option 2: Set PYTHONUNBUFFERED environment variable
+PYTHONUNBUFFERED=1 ttyvid record output.cast -- python3 script.py
+
+# Option 3: Use python -u flag
+ttyvid record output.cast -- python3 -u script.py
+```
+
+The `--python-unbuffered` flag automatically sets `PYTHONUNBUFFERED=1` for the recorded process, forcing Python to use unbuffered I/O mode where all output is immediately visible to ttyvid's PTY.
+
+**Why this happens:** Python detects it's connected to a PTY and uses line-buffering, but without newlines (`\n`), output stays in the buffer until the program exits or the buffer fills up.
+
 ## Usage
 
 ### Convert: From stdin (pipe)

@@ -124,6 +124,11 @@ impl ServerHandler for TtyvidServerHandler {
                         "type": "number",
                         "description": "Frames per second for video output",
                         "default": 10
+                    },
+                    "python_unbuffered": {
+                        "type": "boolean",
+                        "description": "Set PYTHONUNBUFFERED=1 for Python scripts (forces unbuffered output)",
+                        "default": false
                     }
                 }),
             ),
@@ -525,6 +530,7 @@ async fn handle_record(args: JsonValue) -> Result<CallToolResult, CallToolError>
     let rows = args["rows"].as_u64().map(|r| r as usize);
     let theme = args["theme"].as_str();
     let fps = args["fps"].as_u64().map(|f| f as u32);
+    let python_unbuffered = args["python_unbuffered"].as_bool().unwrap_or(false);
 
     // Build command arguments
     let mut cmd_args = vec!["record".to_string(), "-o".to_string(), output.to_string()];
@@ -548,6 +554,14 @@ async fn handle_record(args: JsonValue) -> Result<CallToolResult, CallToolError>
     if let Some(mi) = max_idle {
         cmd_args.push("--max-idle".to_string());
         cmd_args.push(mi.to_string());
+    }
+    if python_unbuffered {
+        cmd_args.push("--python-unbuffered".to_string());
+    }
+
+    // Add command separator if command provided
+    if command.is_some() {
+        cmd_args.push("--".to_string());
     }
 
     // Add command if provided

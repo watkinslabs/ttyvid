@@ -163,7 +163,7 @@ fn main() -> Result<()> {
 
     // Handle subcommands or legacy mode
     match args.command {
-        Some(cli::Command::Record { ref output, ref command, max_idle, no_pause, stats, verbose }) => {
+        Some(cli::Command::Record { ref output, ref command, max_idle, no_pause, stats, verbose, python_unbuffered }) => {
             // Determine output formats
             let output_formats = if !args.formats.is_empty() {
                 // Use --formats flag
@@ -198,6 +198,11 @@ fn main() -> Result<()> {
             };
 
             // Configure and run recorder
+            let mut env_vars = Vec::new();
+            if python_unbuffered {
+                env_vars.push(("PYTHONUNBUFFERED".to_string(), "1".to_string()));
+            }
+
             let config = recorder::RecordConfig {
                 output: cast_file.clone(),
                 command: if command.is_empty() { None } else { Some(command.clone()) },
@@ -207,7 +212,7 @@ fn main() -> Result<()> {
                 allow_pause: !no_pause,
                 show_stats: stats,  // Disabled by default, enable with --stats
                 verbose,
-                env: Vec::new(),
+                env: env_vars,
             };
 
             let recorder = recorder::Recorder::new(config);

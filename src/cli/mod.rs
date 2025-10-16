@@ -139,6 +139,10 @@ pub enum Command {
         /// Verbose output (show detailed messages)
         #[arg(short, long)]
         verbose: bool,
+
+        /// Set PYTHONUNBUFFERED=1 for Python scripts (forces unbuffered output)
+        #[arg(long)]
+        python_unbuffered: bool,
     },
 
     /// Convert .cast file to video
