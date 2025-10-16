@@ -1,6 +1,6 @@
 [package]
 name = "ttyvid"
-version = "0.2.6"
+version = "0.2.7"
 edition = "2021"
 authors = ["Chris Watkins <chris@watkinslabs.com>"]
 description = "Convert terminal recordings to video (GIF/WebM) with embedded fonts, themes, and MCP server for AI assistants"
@@ -20,7 +20,7 @@ name = "font_debug"
 path = "src/bin/font_debug.rs"
 
 [features]
-default = ["webm", "gpu"]
+default = ["webm"]
 webm = ["rav1e"]
 gpu = ["wgpu", "pollster", "bytemuck"]
 
@@ -63,6 +63,9 @@ bitflags = "2.6"
 
 # Cross-platform directory paths
 directories = "5.0"
+
+# Embed assets at compile time
+rust-embed = "8.0"
 
 # Recording functionality
 portable-pty = "0.8"

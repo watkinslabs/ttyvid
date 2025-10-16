@@ -35,6 +35,10 @@ pub struct Theme {
 
     #[serde(default)]
     pub palette: Option<Palette>,
+
+    /// Internal flag: true if theme was loaded from embedded sources
+    #[serde(skip)]
+    pub is_embedded: bool,
 }
 
 fn default_foreground() -> u8 {
@@ -330,9 +334,10 @@ impl Theme {
         let content = fs::read_to_string(path)
             .with_context(|| format!("Failed to read theme file: {}", path.display()))?;
 
-        let theme: Theme = serde_yaml::from_str(&content)
+        let mut theme: Theme = serde_yaml::from_str(&content)
             .with_context(|| format!("Failed to parse theme YAML: {}", path.display()))?;
 
+        theme.is_embedded = false; // Loaded from filesystem
         Ok(theme)
     }
 
@@ -395,9 +400,10 @@ impl Theme {
             _ => anyhow::bail!("Unknown builtin theme: {}. Available themes: default, windows7, fdwm, fdwm-x, simple, bar, game, mac, opensource, scripted", name),
         };
 
-        let theme: Theme = serde_yaml::from_str(yaml)
+        let mut theme: Theme = serde_yaml::from_str(yaml)
             .with_context(|| format!("Failed to parse embedded theme: {}", name))?;
 
+        theme.is_embedded = true; // Loaded from embedded source
         Ok(theme)
     }
 
@@ -432,6 +438,7 @@ impl Default for Theme {
             padding: None,
             layers: Vec::new(),
             palette: None,
+            is_embedded: false,
         }
     }
 }

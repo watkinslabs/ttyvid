@@ -170,34 +170,34 @@ impl TrueTypeFont {
         self.char_height
     }
 
-    /// Get glyph bitmap for a character (cached)
+    /// Get glyph bitmap for a character (cached) - returns bool for compatibility
     pub fn get_glyph(&self, ch: char) -> Vec<bool> {
-        // Check cache first
-        {
-            let cache = self.glyph_cache.lock().unwrap();
-            if let Some(glyph) = cache.get(&ch) {
-                return glyph.clone();
-            }
-        }
-
-        // Not in cache, render it
-        let glyph = self.rasterize_char(ch);
-
-        // Store in cache
-        {
-            let mut cache = self.glyph_cache.lock().unwrap();
-            cache.insert(ch, glyph.clone());
-        }
-
-        glyph
+        // Get intensity and convert to bool
+        self.get_glyph_intensity(ch)
+            .into_iter()
+            .map(|i| i > 128)
+            .collect()
     }
 
-    /// Rasterize a character to a boolean bitmap
+    /// Get glyph with intensity values (grayscale) for a character
+    pub fn get_glyph_intensity(&self, ch: char) -> Vec<u8> {
+        self.rasterize_char_intensity(ch)
+    }
+
+    /// Rasterize a character to a boolean bitmap (legacy, for compatibility)
     fn rasterize_char(&self, ch: char) -> Vec<bool> {
+        self.rasterize_char_intensity(ch)
+            .into_iter()
+            .map(|i| i > 128)
+            .collect()
+    }
+
+    /// Rasterize a character to an intensity bitmap (u8 grayscale)
+    fn rasterize_char_intensity(&self, ch: char) -> Vec<u8> {
         let (metrics, bitmap) = self.font.rasterize(ch, self.font_size);
 
         // Create a bitmap that fits our character cell
-        let mut cell_bitmap = vec![false; self.char_width * self.char_height];
+        let mut cell_bitmap = vec![0u8; self.char_width * self.char_height];
 
         // Center horizontally
         let offset_x = (self.char_width.saturating_sub(metrics.width)) / 2;
@@ -224,8 +224,8 @@ impl TrueTypeFont {
 
                 if dst_x < self.char_width && dst_y < self.char_height {
                     let dst_idx = dst_y * self.char_width + dst_x;
-                    // Consider pixel "on" if alpha > threshold
-                    cell_bitmap[dst_idx] = bitmap[src_idx] > 128;
+                    // Store the grayscale intensity directly
+                    cell_bitmap[dst_idx] = bitmap[src_idx];
                 }
             }
         }

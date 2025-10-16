@@ -4,9 +4,12 @@ use std::path::Path;
 use std::io::Cursor;
 use crate::theme::{Layer, NineSliceConfig};
 use crate::renderer::Canvas;
+use rust_embed::RustEmbed;
 
-// Include embedded layers
-include!(concat!(env!("OUT_DIR"), "/embedded_layers.rs"));
+// Embed all layer files at compile time
+#[derive(RustEmbed)]
+#[folder = "themes/layers/"]
+struct EmbeddedLayers;
 
 pub struct LayerImage {
     pub frames: Vec<RgbaImage>,  // Multiple frames for animated GIFs
@@ -41,10 +44,18 @@ impl LayerImage {
     }
 
     pub fn load(path: &Path) -> Result<Self> {
-        // Try embedded first - extract just the filename to check against embedded layers
+        // Try embedded first - check with full path relative to themes/layers/
+        let path_str = path.to_str().unwrap_or("");
+
+        // Try direct match first (e.g., "layers/fwdm.gif")
+        if let Some(embedded_file) = EmbeddedLayers::get(path_str) {
+            return Self::load_from_bytes(&embedded_file.data, path_str);
+        }
+
+        // Try with just filename (e.g., "fwdm.gif")
         if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-            if let Some(&embedded_data) = EMBEDDED_LAYERS.get(filename) {
-                return Self::load_from_bytes(embedded_data, filename);
+            if let Some(embedded_file) = EmbeddedLayers::get(filename) {
+                return Self::load_from_bytes(&embedded_file.data, filename);
             }
         }
 

@@ -11,6 +11,8 @@ mod theme;
 mod assets;
 mod recorder;
 mod mcp_server;
+mod font_tools;
+mod palette_tools;
 
 use input::{InputSource, AsciicastReader, StdinReader};
 use terminal::TerminalEmulator;
@@ -163,7 +165,7 @@ fn main() -> Result<()> {
 
     // Handle subcommands or legacy mode
     match args.command {
-        Some(cli::Command::Record { ref output, ref command, max_idle, no_pause, stats, verbose }) => {
+        Some(cli::Command::Record { ref output, ref command, max_idle, no_pause, stats, verbose, unbuffered }) => {
             // Determine output formats
             let output_formats = if !args.formats.is_empty() {
                 // Use --formats flag
@@ -197,6 +199,12 @@ fn main() -> Result<()> {
                 (args.columns.unwrap_or(80) as u16, args.rows.unwrap_or(24) as u16)
             };
 
+            // Configure environment variables
+            let mut env_vars = Vec::new();
+            if unbuffered {
+                env_vars.push(("PYTHONUNBUFFERED".to_string(), "1".to_string()));
+            }
+
             // Configure and run recorder
             let config = recorder::RecordConfig {
                 output: cast_file.clone(),
@@ -207,7 +215,7 @@ fn main() -> Result<()> {
                 allow_pause: !no_pause,
                 show_stats: stats,  // Disabled by default, enable with --stats
                 verbose,
-                env: Vec::new(),
+                env: env_vars,
             };
 
             let recorder = recorder::Recorder::new(config);
@@ -353,6 +361,89 @@ fn main() -> Result<()> {
                 println!("\n  Total: {} fonts", font_names.len());
                 println!("\nUsage: ttyvid convert -i input.cast -o output.gif --font FontName");
             }
+        }
+        Some(cli::Command::ConvertFont { ref font, ref output, size, ref chars }) => {
+            println!("Converting font to bitmap .fd format:");
+            println!(" - font: {}", font);
+            println!(" - output: {}", output.display());
+            println!(" - size: {}px", size);
+
+            // Parse custom character map if provided
+            let char_map = if let Some(ref chars_str) = chars {
+                let mut map = Vec::new();
+                for part in chars_str.split(',') {
+                    let part = part.trim();
+                    if let Some(hex) = part.strip_prefix("0x").or_else(|| part.strip_prefix("0X")) {
+                        if let Ok(codepoint) = u32::from_str_radix(hex, 16) {
+                            if let Some(ch) = char::from_u32(codepoint) {
+                                map.push(ch);
+                            }
+                        }
+                    }
+                }
+                Some(map)
+            } else {
+                None
+            };
+
+            // Load and convert the font
+            println!("Loading font...");
+            let converter = font_tools::font_converter::FontConverter::load(font, size)?;
+
+            println!("Generating bitmap font...");
+            converter.convert_to_fd(output, char_map)?;
+
+            println!("\n✓ Font converted successfully");
+        }
+        Some(cli::Command::PaletteCard { ref theme, ref output, fg, bg }) => {
+            use std::path::Path;
+
+            println!("Generating palette card:");
+            println!(" - theme: {}", theme);
+            println!(" - output: {}", output.display());
+            if let Some(fg_idx) = fg {
+                println!(" - foreground: {}", fg_idx);
+            }
+            if let Some(bg_idx) = bg {
+                println!(" - background: {}", bg_idx);
+            }
+
+            // Load theme
+            let theme_obj = {
+                let theme_path = Path::new(theme);
+                if theme_path.exists() && theme_path.is_file() {
+                    Theme::load(theme_path)?
+                } else {
+                    Theme::load_by_name(theme)?
+                }
+            };
+
+            println!("Loaded theme: {}", theme_obj.name);
+
+            // Generate palette card
+            palette_tools::palette_card::generate_palette_card(&theme_obj.name, output, fg, bg)?;
+        }
+        Some(cli::Command::FontCard { ref font, ref output, size: _ }) => {
+            use std::path::Path;
+
+            println!("Generating font card:");
+            println!(" - font: {}", font);
+            println!(" - output: {}", output.display());
+
+            // Try to load font: check if it's a .fd file first, then try embedded
+            let font_path = Path::new(font);
+            let font_obj = if font_path.exists() && font_path.extension().and_then(|e| e.to_str()) == Some("fd") {
+                println!("Loading .fd bitmap font from file");
+                Font::load_from_file(font_path).map_err(|e| anyhow::anyhow!(e))?
+            } else {
+                println!("Loading embedded bitmap font");
+                Font::load(Some(font))
+            };
+
+            println!("Font dimensions: {}x{}", font_obj.width(), font_obj.height());
+
+            // Generate font card
+            font_tools::font_card::generate_font_card(&font_obj, output, font)?;
         }
         None => {
             // Legacy mode: no subcommand, behave like convert
@@ -538,7 +629,8 @@ fn convert_recording(args: &cli::Args, input: Option<PathBuf>, output: Option<Pa
         0.0
     };
     let frame_rate = args.fps.clamp(1, 100);
-    let frame_count = ((duration * frame_rate as f64).ceil() as usize).max(1);
+    // Add 1 frame to ensure all events are processed (last event needs a frame AFTER it to be visible)
+    let frame_count = ((duration * frame_rate as f64).ceil() as usize + 1).max(1);
 
     // Add trailer frames if requested (1.5 seconds holding the final state)
     let trailer_frame_count = if args.trailer {
@@ -579,7 +671,20 @@ fn convert_recording(args: &cli::Args, input: Option<PathBuf>, output: Option<Pa
     // Create rasterizer with font (GPU-accelerated if compiled with --features gpu)
     #[cfg(feature = "gpu")]
     let rasterizer = {
-        let font = if let Some(ref system_font) = args.system_font {
+        let font = if let Some(ref font_file) = args.font_file {
+            eprintln!("Loading bitmap font from file: {}", font_file.display());
+            match Font::load_from_file(font_file) {
+                Ok(bitmap_font) => {
+                    eprintln!("Successfully loaded bitmap font (cell size: {}x{})", bitmap_font.width(), bitmap_font.height());
+                    bitmap_font
+                }
+                Err(e) => {
+                    eprintln!("Failed to load font file: {}", e);
+                    eprintln!("Falling back to embedded bitmap font");
+                    Font::load(args.font.as_deref())
+                }
+            }
+        } else if let Some(ref system_font) = args.system_font {
             eprintln!("Loading system font: {} at size {}", system_font, args.font_size);
             if let Some(ttf_font) = Font::from_system_font(system_font, args.font_size) {
                 eprintln!("Successfully loaded system font (cell size: {}x{})", ttf_font.width(), ttf_font.height());
@@ -609,7 +714,20 @@ fn convert_recording(args: &cli::Args, input: Option<PathBuf>, output: Option<Pa
     };
 
     #[cfg(not(feature = "gpu"))]
-    let rasterizer = if let Some(ref system_font) = args.system_font {
+    let rasterizer = if let Some(ref font_file) = args.font_file {
+        eprintln!("Loading bitmap font from file: {}", font_file.display());
+        match Font::load_from_file(font_file) {
+            Ok(bitmap_font) => {
+                eprintln!("Successfully loaded bitmap font (cell size: {}x{})", bitmap_font.width(), bitmap_font.height());
+                Rasterizer::with_font(bitmap_font)
+            }
+            Err(e) => {
+                eprintln!("Failed to load font file: {}", e);
+                eprintln!("Falling back to embedded bitmap font");
+                Rasterizer::new(args.font.as_deref())
+            }
+        }
+    } else if let Some(ref system_font) = args.system_font {
         eprintln!("Loading system font: {} at size {}", system_font, args.font_size);
         if let Some(ttf_font) = Font::from_system_font(system_font, args.font_size) {
             eprintln!("Successfully loaded system font (cell size: {}x{})", ttf_font.width(), ttf_font.height());
@@ -657,8 +775,15 @@ fn convert_recording(args: &cli::Args, input: Option<PathBuf>, output: Option<Pa
     // Load theme layers (without pre-processing - render per mode in frame loop)
     let mut layer_renderer = LayerRenderer::new();
     for layer in &theme.layers {
-        // Search for layer file in multiple locations
-        let layer_path = find_layer_file(&layer.file);
+        // If theme is embedded, load ONLY from embedded layers (skip filesystem search)
+        // If theme is from filesystem, search filesystem first then fallback to embedded
+        let layer_path = if theme.is_embedded {
+            // Embedded theme: use layer path as-is (LayerImage::load will check embedded layers)
+            PathBuf::from(&layer.file)
+        } else {
+            // External theme: search filesystem locations
+            find_layer_file(&layer.file)
+        };
 
         match LayerImage::load(&layer_path) {
             Ok(layer_image) => {

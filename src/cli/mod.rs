@@ -26,6 +26,10 @@ pub struct Args {
     #[arg(short = 'f', long, global = true)]
     pub font: Option<String>,
 
+    /// Font file path (.fd bitmap font file)
+    #[arg(long, global = true)]
+    pub font_file: Option<PathBuf>,
+
     /// System font name or path (TrueType/OpenType)
     /// Use "monospace", "default", or "system" for system default monospace font
     #[arg(long, global = true)]
@@ -139,6 +143,10 @@ pub enum Command {
         /// Verbose output (show detailed messages)
         #[arg(short, long)]
         verbose: bool,
+
+        /// Enable unbuffered output (sets PYTHONUNBUFFERED=1 for Python scripts)
+        #[arg(short = 'u', long)]
+        unbuffered: bool,
     },
 
     /// Convert .cast file to video
@@ -161,5 +169,58 @@ pub enum Command {
         /// Show embedded bitmap fonts
         #[arg(long)]
         bitmap: bool,
+    },
+
+    /// Convert TrueType font to bitmap .fd format
+    ConvertFont {
+        /// Font name or path (TrueType/OpenType)
+        #[arg(short, long)]
+        font: String,
+
+        /// Output .fd file path
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// Font size in pixels (height of character cell)
+        #[arg(short, long, default_value = "16")]
+        size: usize,
+
+        /// Custom character map (comma-separated Unicode codepoints in hex, e.g., "0x41,0x42,0x43")
+        #[arg(long)]
+        chars: Option<String>,
+    },
+
+    /// Generate palette card image for a theme
+    PaletteCard {
+        /// Theme name or path
+        #[arg(short, long)]
+        theme: String,
+
+        /// Output PNG file path
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// Foreground color index (0-255)
+        #[arg(long)]
+        fg: Option<u8>,
+
+        /// Background color index (0-255)
+        #[arg(long)]
+        bg: Option<u8>,
+    },
+
+    /// Generate font card image showing all characters
+    FontCard {
+        /// Font name (embedded) or .fd file path
+        #[arg(short, long)]
+        font: String,
+
+        /// Output PNG file path
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// Font size (unused, kept for compatibility)
+        #[arg(short, long, default_value = "16")]
+        size: usize,
     },
 }

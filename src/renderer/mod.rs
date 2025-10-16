@@ -1,15 +1,11 @@
-mod font;
 mod canvas;
-mod colors;
-mod truetype_font;
 
 #[cfg(feature = "gpu")]
 mod gpu_renderer;
 
-pub use font::Font;
+pub use crate::font_tools::{Font, TrueTypeFont, query_terminal_font};
+pub use crate::palette_tools::Palette;
 pub use canvas::Canvas;
-pub use colors::Palette;
-pub use truetype_font::{TrueTypeFont, query_terminal_font};
 
 #[cfg(feature = "gpu")]
 pub use gpu_renderer::GpuRenderer;
@@ -98,8 +94,9 @@ impl Rasterizer {
                 let pixel_y = y + gy;
 
                 if pixel_x < canvas.width() && pixel_y < canvas.height() {
-                    let is_foreground = glyph[gy * self.font.width() + gx];
-                    let color = if is_foreground { fg } else { bg };
+                    let intensity = glyph[gy * self.font.width() + gx];
+                    // Use threshold for now (TODO: implement alpha blending for anti-aliasing)
+                    let color = if intensity > 127 { fg } else { bg };
                     canvas.set_pixel(pixel_x, pixel_y, color);
                 }
             }
@@ -128,8 +125,9 @@ impl Rasterizer {
                 let pixel_y = y + gy;
 
                 if pixel_x < canvas.width() && pixel_y < canvas.height() {
-                    let is_foreground = glyph[gy * self.font.width() + gx];
-                    let color = if is_foreground { fg } else { bg };
+                    let intensity = glyph[gy * self.font.width() + gx];
+                    // Use threshold for now (TODO: implement alpha blending for anti-aliasing)
+                    let color = if intensity > 127 { fg } else { bg };
                     canvas.set_pixel(pixel_x, pixel_y, color);
                 }
             }

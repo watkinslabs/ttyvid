@@ -1,0 +1,7 @@
+{"env":{"SHELL":"/bin/bash","TERM":"xterm-256color"},"height":24,"timestamp":1760632701,"title":"ttyvid recording","version":2,"width":80}
+[0.010200712,"o","Testing tight font fit with Adwaita Mono 16\r\n┌─────────────────────────────────┐\r\n"]
+[0.020261613,"o","│  Box drawing test: ═║╔╗╚╝      │\r\n│  Blocks: █▓▒░ ▀▄▌▐              │\r\n"]
+[0.030320223,"o","│  Arrows: ↑↓→← ▲▼►◄              │\r\n│  Math: °±×÷≈≥≤≠                 │\r\n"]
+[0.040380383,"o","│  Currency: $¢£¥                 │\r\n"]
+[0.050442143,"o","└─────────────────────────────────┘\r\nDescenders: gjpqy\r\n"]
+[0.060509074,"o","Height test: Âĝĵŷ\r\n"]

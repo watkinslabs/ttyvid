@@ -1,14 +1,27 @@
-// Include the auto-generated embedded fonts
-include!(concat!(env!("OUT_DIR"), "/embedded_fonts.rs"));
+use std::collections::HashMap;
+use rust_embed::RustEmbed;
+
+// Embed all font files at compile time
+#[derive(RustEmbed)]
+#[folder = "themes/fonts/"]
+struct EmbeddedFonts;
 
 use super::truetype_font::TrueTypeFont;
 
+const DEFAULT_FONT_NAME: &str = "Verite_9x16";
+
 pub enum Font {
-    /// Bitmap font (FD format) with CP437 character mapping
+    /// Legacy bitmap font (FD format) with CP437 character mapping, binary (on/off) pixels
     Bitmap {
         width: usize,
         height: usize,
         glyphs: Vec<Vec<bool>>, // Bitmap data for each of 256 characters
+    },
+    /// Modern bitmap font with UTF-8 support and grayscale anti-aliasing
+    BitmapIntensity {
+        width: usize,
+        height: usize,
+        glyphs: HashMap<char, Vec<u8>>, // Character -> intensity map (0-255 per pixel)
     },
     /// TrueType font with full UTF-8 support
     TrueType(TrueTypeFont),
@@ -274,21 +287,25 @@ impl Font {
     pub fn load(name: Option<&str>) -> Self {
         // Use specified font or default
         let font_name = name.unwrap_or(DEFAULT_FONT_NAME);
+        let font_file = format!("{}.fd", font_name);
 
         // Look up font in embedded fonts
-        if let Some(&font_data) = EMBEDDED_FONTS.get(font_name) {
-            match Self::parse_fd_font(font_data) {
+        if let Some(embedded_file) = EmbeddedFonts::get(&font_file) {
+            let font_data = String::from_utf8_lossy(&embedded_file.data);
+            match Self::parse_fd_font(&font_data) {
                 Ok(font) => return font,
                 Err(e) => eprintln!("Warning: Failed to parse font '{}': {}", font_name, e),
             }
         } else {
-            eprintln!("Warning: Font '{}' not found. Available fonts: {:?}", font_name, FONT_NAMES);
+            eprintln!("Warning: Font '{}' not found in embedded fonts", font_name);
         }
 
         // Fall back to default font if specified font failed
         if font_name != DEFAULT_FONT_NAME {
-            if let Some(&font_data) = EMBEDDED_FONTS.get(DEFAULT_FONT_NAME) {
-                if let Ok(font) = Self::parse_fd_font(font_data) {
+            let default_file = format!("{}.fd", DEFAULT_FONT_NAME);
+            if let Some(embedded_file) = EmbeddedFonts::get(&default_file) {
+                let font_data = String::from_utf8_lossy(&embedded_file.data);
+                if let Ok(font) = Self::parse_fd_font(&font_data) {
                     return font;
                 }
             }
@@ -298,14 +315,31 @@ impl Font {
         Self::fallback_font()
     }
 
+    /// Load a bitmap font from a file path (.fd format)
+    pub fn load_from_file(path: &std::path::Path) -> Result<Self, String> {
+        let font_data = std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read font file: {}", e))?;
+        Self::parse_fd_font(&font_data)
+    }
+
     /// Get list of available embedded font names
-    pub fn available_fonts() -> &'static [&'static str] {
-        FONT_NAMES
+    pub fn available_fonts() -> Vec<String> {
+        EmbeddedFonts::iter()
+            .filter_map(|path| {
+                let path_str = path.as_ref();
+                if path_str.ends_with(".fd") {
+                    path_str.strip_suffix(".fd").map(|s| s.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     pub fn width(&self) -> usize {
         match self {
             Font::Bitmap { width, .. } => *width,
+            Font::BitmapIntensity { width, .. } => *width,
             Font::TrueType(ttf) => ttf.width(),
         }
     }
@@ -313,33 +347,88 @@ impl Font {
     pub fn height(&self) -> usize {
         match self {
             Font::Bitmap { height, .. } => *height,
+            Font::BitmapIntensity { height, .. } => *height,
             Font::TrueType(ttf) => ttf.height(),
         }
     }
 
-    pub fn get_glyph(&self, ch: u8) -> Vec<bool> {
+    pub fn glyph_count(&self) -> usize {
         match self {
-            Font::Bitmap { glyphs, .. } => glyphs[ch as usize].clone(),
-            Font::TrueType(_) => {
-                // TrueType fonts use get_glyph_utf8 instead
-                // For compatibility, map u8 to char
-                self.get_glyph_utf8(ch as char)
+            Font::Bitmap { glyphs, .. } => glyphs.len(),
+            Font::BitmapIntensity { glyphs, .. } => glyphs.len(),
+            Font::TrueType(_) => 256, // TrueType supports all characters, but report 256 for compatibility
+        }
+    }
+
+    pub fn get_glyph(&self, ch: u8) -> Vec<u8> {
+        self.get_glyph_utf8(ch as char)
+    }
+
+    /// Get glyph for a character (CPU rendering)
+    /// Returns the pixel data for CPU-based rendering
+    pub fn get_glyph_utf8(&self, ch: char) -> Vec<u8> {
+        match self {
+            Font::Bitmap { glyphs, .. } => {
+                // Legacy bitmap - convert bool to u8 (0 or 255)
+                let mapped = map_utf8_to_cp437(ch);
+                glyphs[mapped as usize]
+                    .iter()
+                    .map(|&b| if b { 255 } else { 0 })
+                    .collect()
+            }
+            Font::BitmapIntensity { glyphs, width, height, .. } => {
+                // Try direct UTF-8 lookup first
+                if let Some(glyph) = glyphs.get(&ch) {
+                    return glyph.clone();
+                }
+
+                // If not found, try ASCII fallback mapping
+                let fallback_ch = map_utf8_to_cp437(ch) as char;
+                if let Some(glyph) = glyphs.get(&fallback_ch) {
+                    return glyph.clone();
+                }
+
+                // Character not found - return empty glyph
+                vec![0u8; width * height]
+            }
+            Font::TrueType(ttf) => {
+                // TrueType returns grayscale directly
+                ttf.get_glyph_intensity(ch)
             }
         }
     }
 
-    /// Get glyph for a character (handles both bitmap and TrueType fonts)
-    /// Returns a Vec for both types for consistency
-    pub fn get_glyph_utf8(&self, ch: char) -> Vec<bool> {
+    /// Get glyph index for a character (GPU rendering)
+    /// Returns the index into the font's glyph array for GPU texture atlas
+    pub fn get_glyph_index_utf8(&self, ch: char) -> Option<usize> {
         match self {
-            Font::Bitmap { glyphs, .. } => {
-                // Map UTF-8 to CP437 for bitmap fonts
+            Font::Bitmap { .. } => {
+                // Legacy bitmap uses CP437 mapping
                 let mapped = map_utf8_to_cp437(ch);
-                glyphs[mapped as usize].clone()
+                Some(mapped as usize)
             }
-            Font::TrueType(ttf) => {
-                // TrueType fonts handle UTF-8 directly with full Unicode support
-                ttf.get_glyph(ch)
+            Font::BitmapIntensity { glyphs, .. } => {
+                // Try direct UTF-8 lookup first
+                // For GPU, we need to track the order/index
+                // This is a simplified version - real GPU rendering would need
+                // a separate index mapping structure
+                if glyphs.contains_key(&ch) {
+                    // For now, just indicate the character exists
+                    // A proper implementation would maintain an index->char mapping
+                    Some(ch as usize)
+                } else {
+                    // Try ASCII fallback mapping
+                    let fallback_ch = map_utf8_to_cp437(ch) as char;
+                    if glyphs.contains_key(&fallback_ch) {
+                        Some(fallback_ch as usize)
+                    } else {
+                        None
+                    }
+                }
+            }
+            Font::TrueType(_) => {
+                // TrueType fonts: use Unicode codepoint as index
+                Some(ch as usize)
             }
         }
     }
@@ -373,16 +462,20 @@ impl Font {
 
                 if glyph_x < char_width && glyph_y < char_height {
                     let glyph_idx = glyph_y * char_width + glyph_x;
-                    let is_foreground = glyph[glyph_idx];
+                    let intensity = glyph[glyph_idx];
 
-                    // Only render foreground pixels (the actual character)
-                    if is_foreground {
+                    // Only render if pixel has some intensity
+                    if intensity > 0 {
                         let pixel_x = x + sx as i32;
                         let pixel_y = y + sy as i32;
 
                         if pixel_x >= 0 && pixel_y >= 0 &&
                            pixel_x < canvas.width() as i32 && pixel_y < canvas.height() as i32 {
-                            canvas.set_pixel(pixel_x as usize, pixel_y as usize, fg_color);
+                            // For now, just use full foreground color if intensity > threshold
+                            // TODO: Implement alpha blending for anti-aliasing
+                            if intensity > 127 {
+                                canvas.set_pixel(pixel_x as usize, pixel_y as usize, fg_color);
+                            }
                         }
                     }
                 }
@@ -390,12 +483,13 @@ impl Font {
         }
     }
 
-    // Parse .fd font format
+    // Parse .fd font format (supports both legacy and new intensity formats)
     fn parse_fd_font(data: &str) -> Result<Self, String> {
         let lines: Vec<&str> = data.lines().collect();
         let mut height = 16;
         let mut width = 9;
         let mut char_start_idx = 0;
+        let mut charset_size: Option<usize> = None;
 
         // Parse header
         for (idx, line) in lines.iter().enumerate() {
@@ -409,6 +503,10 @@ impl Font {
                     .nth(1)
                     .and_then(|s| s.parse().ok())
                     .ok_or("Invalid height")?;
+            } else if line.starts_with("charset") {
+                charset_size = line.split_whitespace()
+                    .nth(1)
+                    .and_then(|s| s.parse().ok());
             } else if line.starts_with("char") {
                 // Found first character, remember where it starts
                 char_start_idx = idx;
@@ -416,20 +514,34 @@ impl Font {
             }
         }
 
-        // Now parse characters starting from char_start_idx
+        // Detect if this is a new-format font (charset > 256 or has unicode mappings)
+        let is_new_format = charset_size.map(|s| s > 256).unwrap_or(false) ||
+                            data.contains("unicode");
+
+        if is_new_format {
+            // Parse as new format with intensities and UTF-8 support
+            Self::parse_fd_font_intensity(&lines[char_start_idx..], width, height)
+        } else {
+            // Parse as legacy format
+            Self::parse_fd_font_legacy(&lines[char_start_idx..], width, height)
+        }
+    }
+
+    // Parse legacy .fd format (256 chars max, bool pixels)
+    fn parse_fd_font_legacy(lines: &[&str], width: usize, height: usize) -> Result<Self, String> {
         let mut glyphs = vec![vec![false; width * height]; 256];
         let mut current_char: Option<usize> = None;
         let mut current_width = width;
         let mut bitmap_lines: Vec<String> = Vec::new();
 
-        for line in &lines[char_start_idx..] {
+        for line in lines {
             let line = line.trim();
 
             if line.starts_with("char") {
                 // Save previous character if we have one
                 if let Some(ch_idx) = current_char {
                     if ch_idx < 256 && bitmap_lines.len() == height {
-                        glyphs[ch_idx] = Self::parse_bitmap(&bitmap_lines, current_width, height);
+                        glyphs[ch_idx] = Self::parse_bitmap_bool(&bitmap_lines, current_width, height);
                     }
                 }
 
@@ -438,14 +550,13 @@ impl Font {
                     .nth(1)
                     .and_then(|s| s.parse().ok());
                 bitmap_lines.clear();
-                current_width = width; // Reset to default
+                current_width = width;
             } else if line.starts_with("width") {
                 current_width = line.split_whitespace()
                     .nth(1)
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(width);
             } else if !line.is_empty() && !line.starts_with('#') && (line.contains('x') || line.contains('.')) {
-                // This is a bitmap line
                 bitmap_lines.push(line.to_string());
             }
         }
@@ -453,7 +564,7 @@ impl Font {
         // Save last character
         if let Some(ch_idx) = current_char {
             if ch_idx < 256 && bitmap_lines.len() == height {
-                glyphs[ch_idx] = Self::parse_bitmap(&bitmap_lines, current_width, height);
+                glyphs[ch_idx] = Self::parse_bitmap_bool(&bitmap_lines, current_width, height);
             }
         }
 
@@ -464,7 +575,69 @@ impl Font {
         })
     }
 
-    fn parse_bitmap(lines: &[String], char_width: usize, height: usize) -> Vec<bool> {
+    // Parse new .fd format with intensity values and UTF-8 support
+    fn parse_fd_font_intensity(lines: &[&str], width: usize, height: usize) -> Result<Self, String> {
+        let mut glyphs: HashMap<char, Vec<u8>> = HashMap::new();
+        let mut current_char_idx: Option<usize> = None;
+        let mut current_unicode: Option<char> = None;
+        let mut current_width = width;
+        let mut bitmap_lines: Vec<String> = Vec::new();
+
+        for line in lines {
+            let line = line.trim();
+
+            if line.starts_with("char") {
+                // Save previous character if we have one
+                if let (Some(_idx), Some(unicode_ch)) = (current_char_idx, current_unicode) {
+                    if bitmap_lines.len() == height {
+                        let glyph = Self::parse_bitmap_intensity(&bitmap_lines, current_width, height);
+                        glyphs.insert(unicode_ch, glyph);
+                    }
+                }
+
+                // Start new character
+                current_char_idx = line.split_whitespace()
+                    .nth(1)
+                    .and_then(|s| s.parse().ok());
+                current_unicode = None; // Will be set by unicode line
+                bitmap_lines.clear();
+                current_width = width;
+            } else if line.starts_with("unicode") {
+                // Parse unicode value (e.g., "unicode 0x0041")
+                if let Some(hex_str) = line.split_whitespace().nth(1) {
+                    if let Some(hex_part) = hex_str.strip_prefix("0x").or_else(|| hex_str.strip_prefix("0X")) {
+                        if let Ok(codepoint) = u32::from_str_radix(hex_part, 16) {
+                            current_unicode = char::from_u32(codepoint);
+                        }
+                    }
+                }
+            } else if line.starts_with("width") {
+                current_width = line.split_whitespace()
+                    .nth(1)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(width);
+            } else if !line.is_empty() && !line.starts_with('#') &&
+                     (line.contains('x') || line.contains('.') || line.chars().any(|c| c.is_ascii_digit())) {
+                bitmap_lines.push(line.to_string());
+            }
+        }
+
+        // Save last character
+        if let (Some(_idx), Some(unicode_ch)) = (current_char_idx, current_unicode) {
+            if bitmap_lines.len() == height {
+                let glyph = Self::parse_bitmap_intensity(&bitmap_lines, current_width, height);
+                glyphs.insert(unicode_ch, glyph);
+            }
+        }
+
+        Ok(Font::BitmapIntensity {
+            width,
+            height,
+            glyphs,
+        })
+    }
+
+    fn parse_bitmap_bool(lines: &[String], char_width: usize, height: usize) -> Vec<bool> {
         let mut bitmap = Vec::with_capacity(char_width * height);
 
         for line in lines {
@@ -486,14 +659,52 @@ impl Font {
         bitmap
     }
 
-    // Fallback font in case parsing fails
+    fn parse_bitmap_intensity(lines: &[String], char_width: usize, height: usize) -> Vec<u8> {
+        let mut bitmap = Vec::with_capacity(char_width * height);
+
+        for line in lines {
+            for (i, ch) in line.chars().enumerate() {
+                if i >= char_width {
+                    break;
+                }
+                // Map intensity characters to u8 values
+                // . = 0, 1 = 25, 2 = 51, ... 9 = 230, x = 255
+                let intensity = match ch {
+                    '.' => 0,
+                    '1' => 25,
+                    '2' => 51,
+                    '3' => 76,
+                    '4' => 102,
+                    '5' => 127,
+                    '6' => 153,
+                    '7' => 178,
+                    '8' => 204,
+                    '9' => 230,
+                    'x' | 'X' => 255,
+                    _ => 0, // Unknown character, treat as blank
+                };
+                bitmap.push(intensity);
+            }
+
+            // Pad line if needed
+            while bitmap.len() % char_width != 0 {
+                bitmap.push(0);
+            }
+        }
+
+        // Ensure we have exactly width * height pixels
+        bitmap.resize(char_width * height, 0);
+        bitmap
+    }
+
+    // Fallback font in case parsing fails (returns legacy bool format)
     fn fallback_font() -> Self {
         let width = 8;
         let height = 16;
         let mut glyphs = Vec::with_capacity(256);
 
         for i in 0..=255 {
-            let glyph = Self::generate_fallback_glyph(i, width, height);
+            let glyph = Self::generate_fallback_glyph_bool(i, width, height);
             glyphs.push(glyph);
         }
 
@@ -504,7 +715,7 @@ impl Font {
         }
     }
 
-    fn generate_fallback_glyph(ch: u8, width: usize, height: usize) -> Vec<bool> {
+    fn generate_fallback_glyph_bool(ch: u8, width: usize, height: usize) -> Vec<bool> {
         let mut bitmap = vec![false; width * height];
 
         if ch >= 32 && ch < 127 {
