@@ -53,10 +53,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let gx = px % params.cell_width;
     let gy = py % params.cell_height;
 
-    // Get glyph bitmap
+    // Get glyph bitmap (intensity 0-10 scale)
     let char_offset = cell.character * params.cell_width * params.cell_height;
     let glyph_idx = char_offset + gy * params.cell_width + gx;
-    let is_foreground = font_data[glyph_idx];
+    let intensity = font_data[glyph_idx];
 
     // Handle reverse flag
     var fg_color = cell.fg_color;
@@ -67,9 +67,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         bg_color = temp;
     }
 
-    // Select color based on foreground/background
+    // Select color based on intensity
+    // Intensity 0 = background, intensity > 0 = foreground
     var color_idx: u32;
-    if (is_foreground != 0u) {
+    if (intensity > 0u) {
         color_idx = fg_color;
     } else {
         color_idx = bg_color;

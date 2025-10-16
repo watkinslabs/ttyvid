@@ -209,8 +209,9 @@ impl GpuRenderer {
         let mut font_data = Vec::with_capacity(256 * cell_width * cell_height);
         for char_idx in 0u8..=255u8 {
             let glyph = font.get_glyph(char_idx);
-            for pixel in glyph {
-                font_data.push(if pixel { 1u32 } else { 0u32 });
+            for &intensity in glyph.iter() {
+                // Convert intensity (0-10 scale) to u32 for GPU
+                font_data.push(intensity as u32);
             }
         }
 
@@ -804,8 +805,22 @@ impl GpuRenderer {
                 let pixel_y = y + gy;
 
                 if pixel_x < canvas.width() && pixel_y < canvas.height() {
-                    let is_foreground = glyph[gy * self.font.width() + gx];
-                    let color = if is_foreground { fg } else { bg };
+                    let intensity = glyph[gy * self.font.width() + gx];
+                    // Intensity 0 = bg, intensity 10 = fg, blend for in-between
+                    let color = if intensity == 0 {
+                        bg
+                    } else if intensity >= 10 {
+                        fg
+                    } else {
+                        // Blend between bg and fg based on intensity
+                        let (bg_r, bg_g, bg_b) = self.palette.get_rgb(bg);
+                        let (fg_r, fg_g, fg_b) = self.palette.get_rgb(fg);
+                        let blend_factor = intensity as f32 / 10.0;
+                        let r = bg_r as f32 + (fg_r as i16 - bg_r as i16) as f32 * blend_factor;
+                        let g = bg_g as f32 + (fg_g as i16 - bg_g as i16) as f32 * blend_factor;
+                        let b = bg_b as f32 + (fg_b as i16 - bg_b as i16) as f32 * blend_factor;
+                        self.palette.match_color_index(r as i32, g as i32, b as i32)
+                    };
                     canvas.set_pixel(pixel_x, pixel_y, color);
                 }
             }
@@ -831,8 +846,22 @@ impl GpuRenderer {
                 let pixel_y = y + gy;
 
                 if pixel_x < canvas.width() && pixel_y < canvas.height() {
-                    let is_foreground = glyph[gy * self.font.width() + gx];
-                    let color = if is_foreground { fg } else { bg };
+                    let intensity = glyph[gy * self.font.width() + gx];
+                    // Intensity 0 = bg, intensity 10 = fg, blend for in-between
+                    let color = if intensity == 0 {
+                        bg
+                    } else if intensity >= 10 {
+                        fg
+                    } else {
+                        // Blend between bg and fg based on intensity
+                        let (bg_r, bg_g, bg_b) = self.palette.get_rgb(bg);
+                        let (fg_r, fg_g, fg_b) = self.palette.get_rgb(fg);
+                        let blend_factor = intensity as f32 / 10.0;
+                        let r = bg_r as f32 + (fg_r as i16 - bg_r as i16) as f32 * blend_factor;
+                        let g = bg_g as f32 + (fg_g as i16 - bg_g as i16) as f32 * blend_factor;
+                        let b = bg_b as f32 + (fg_b as i16 - bg_b as i16) as f32 * blend_factor;
+                        self.palette.match_color_index(r as i32, g as i32, b as i32)
+                    };
                     canvas.set_pixel(pixel_x, pixel_y, color);
                 }
             }
