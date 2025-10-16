@@ -1,0 +1,51 @@
+# Makefile for rebuilding all fonts in themes/font_Ext/
+
+CONVERTER = ./target/release/ttyvid
+FONT_DIR = themes/font_Ext
+
+# All font targets
+FONTS = \
+	$(FONT_DIR)/Adwaita_Mono_16.fd \
+	$(FONT_DIR)/Liberation_Mono_16.fd \
+	$(FONT_DIR)/Noto_Sans_Mono_16.fd \
+	$(FONT_DIR)/Source_Code_Pro_16.fd \
+	$(FONT_DIR)/Symbola_16.fd \
+	$(FONT_DIR)/Noto_Emoji_16.fd
+
+.PHONY: all clean
+
+all: $(FONTS)
+
+# Adwaita Mono 16px
+$(FONT_DIR)/Adwaita_Mono_16.fd: $(CONVERTER)
+	@echo "Converting Adwaita Mono 16px..."
+	$(CONVERTER) convert-font --font "Adwaita Mono" --size 16 --output $@
+
+# Liberation Mono 16px
+$(FONT_DIR)/Liberation_Mono_16.fd: $(CONVERTER)
+	@echo "Converting Liberation Mono 16px..."
+	$(CONVERTER) convert-font --font "Liberation Mono" --size 16 --output $@
+
+# Noto Sans Mono 16px
+$(FONT_DIR)/Noto_Sans_Mono_16.fd: $(CONVERTER)
+	@echo "Converting Noto Sans Mono 16px..."
+	$(CONVERTER) convert-font --font "Noto Sans Mono" --size 16 --output $@
+
+# Source Code Pro 16px
+$(FONT_DIR)/Source_Code_Pro_16.fd: $(CONVERTER)
+	@echo "Converting Source Code Pro 16px..."
+	$(CONVERTER) convert-font --font "Source Code Pro" --size 16 --output $@
+
+# Symbola 16px
+$(FONT_DIR)/Symbola_16.fd: $(CONVERTER)
+	@echo "Converting Symbola 16px..."
+	$(CONVERTER) convert-font --font "Symbola" --size 16 --output $@
+
+# Noto Emoji 16px
+$(FONT_DIR)/Noto_Emoji_16.fd: $(CONVERTER)
+	@echo "Converting Noto Emoji 16px..."
+	$(CONVERTER) convert-font --font "Noto Emoji" --size 16 --output $@
+
+clean:
+	@echo "Removing all generated fonts..."
+	rm -f $(FONTS)

@@ -11,6 +11,7 @@ use std::path::PathBuf;
 /// Convert a TrueType font to .fd bitmap font format
 pub struct FontConverter {
     font: FontdueFont,
+    fallback_fonts: Vec<FontdueFont>, // Fallback fonts for missing glyphs
     font_name: String,
     font_size: f32,
     char_width: usize,
@@ -104,14 +105,96 @@ impl FontConverter {
         eprintln!("Font converter: font_size={}px, cell={}x{} (tight fit), ascent={:.1}px, descent={:.1}px, bounds={}..{}",
             font_size, char_width, char_height, line_metrics.ascent, line_metrics.descent, min_top, max_bottom);
 
+        // Load fallback fonts automatically using fontconfig
+        let fallback_fonts = Self::load_fallback_fonts(font_size)?;
+
+        if !fallback_fonts.is_empty() {
+            eprintln!("Loaded {} fallback fonts for missing glyphs", fallback_fonts.len());
+        }
+
         Ok(Self {
             font,
+            fallback_fonts,
             font_name,
             font_size: font_size as f32,
             char_width,
             char_height,
             y_offset_adjustment: min_top, // Store the min_top so we can adjust all glyphs
         })
+    }
+
+    /// Load fallback fonts using fontconfig to find fonts that cover missing glyphs
+    fn load_fallback_fonts(font_size: usize) -> Result<Vec<FontdueFont>> {
+        let mut fallback_fonts = Vec::new();
+
+        // Common fallback fonts that provide good Unicode coverage including emoji
+        let fallback_names = [
+            "Symbola",           // Comprehensive symbol and emoji coverage
+            "Noto Color Emoji",  // Color emoji
+            "Noto Emoji",        // Black & white emoji
+            "DejaVu Sans",       // Good Unicode coverage
+        ];
+
+        for fallback_name in &fallback_names {
+            if let Ok(font_data) = Self::try_load_font_data(fallback_name) {
+                if let Ok(font) = FontdueFont::from_bytes(font_data.as_slice(), FontSettings::default()) {
+                    eprintln!("  Loaded fallback font: {}", fallback_name);
+                    fallback_fonts.push(font);
+                }
+            }
+        }
+
+        Ok(fallback_fonts)
+    }
+
+    /// Try to load font data, returns error if font not found
+    fn try_load_font_data(font_name: &str) -> Result<Vec<u8>> {
+        let source = SystemSource::new();
+        let handle = source
+            .select_best_match(&[FamilyName::Title(font_name.to_string())], &Properties::new())
+            .with_context(|| format!("Font '{}' not found", font_name))?;
+
+        Ok(handle
+            .load()
+            .with_context(|| format!("Failed to load font: {}", font_name))?
+            .copy_font_data()
+            .with_context(|| "Failed to copy font data")?
+            .to_vec())
+    }
+
+    /// Rasterize a character using primary font with fallback to other fonts
+    fn rasterize_with_fallback(&self, ch: char) -> (fontdue::Metrics, Vec<u8>) {
+        let ch_code = ch as u32;
+
+        // For emoji range (U+2700-U+27BF Dingbats, U+1F300+ emoji), skip primary font and use fallback
+        // Most monospace programming fonts don't have proper emoji glyphs
+        let is_emoji_range = (ch_code >= 0x2700 && ch_code <= 0x27BF) ||  // Dingbats
+                             (ch_code >= 0x1F300 && ch_code <= 0x1F6FF) || // Misc Symbols and Pictographs
+                             (ch_code >= 0x1F600 && ch_code <= 0x1F64F) || // Emoticons
+                             (ch_code >= 0x1F900 && ch_code <= 0x1F9FF) || // Supplemental Symbols
+                             (ch_code >= 0x1FA00 && ch_code <= 0x1FA6F);   // Extended Pictographs
+
+        if !is_emoji_range {
+            // Try primary font first for non-emoji
+            let (metrics, bitmap) = self.font.rasterize(ch, self.font_size);
+
+            // Check if we got a valid glyph (has pixels)
+            if bitmap.iter().any(|&pixel| pixel > 10) {
+                return (metrics, bitmap);
+            }
+        }
+
+        // Try fallback fonts for emoji or if primary didn't have it
+        for fallback_font in &self.fallback_fonts {
+            let (fb_metrics, fb_bitmap) = fallback_font.rasterize(ch, self.font_size);
+            if fb_bitmap.iter().any(|&pixel| pixel > 10) {
+                return (fb_metrics, fb_bitmap);
+            }
+        }
+
+        // No font had the glyph - return empty from primary font
+        let (metrics, bitmap) = self.font.rasterize(ch, self.font_size);
+        (metrics, bitmap)
     }
 
     /// Convert the font to .fd format with UTF-8 character support
@@ -202,6 +285,10 @@ impl FontConverter {
             .collect();
         index_to_char.sort_by_key(|(idx, _)| *idx);
 
+        // Track bitmap data for deduplication
+        // Map from bitmap data (WITHOUT newlines) -> first character index that has this bitmap
+        let mut bitmap_to_index: HashMap<String, usize> = HashMap::new();
+
         for (idx, ch) in index_to_char.iter() {
             // Write character header
             writeln!(file, "char {}", idx)?;
@@ -211,21 +298,24 @@ impl FontConverter {
             // Check if this is a control character or non-printable
             let is_control = (*ch as u32) < 32 || *ch == '\u{007F}';
 
+            // Generate bitmap data as string
+            let mut bitmap_data = String::new();
+            let mut is_blank = true;
+
             if is_control {
                 // Render control characters as empty (all dots)
                 for _y in 0..self.char_height {
                     for _x in 0..self.char_width {
-                        write!(file, ".")?;
+                        bitmap_data.push('.');
                     }
-                    writeln!(file)?;
+                    bitmap_data.push('\n');
                 }
             } else {
-                // Normal character rendering
-                let (metrics, bitmap) = self.font.rasterize(*ch, self.font_size);
+                // Normal character rendering - try primary font first, then fallbacks
+                let (metrics, bitmap) = self.rasterize_with_fallback(*ch);
 
-                // Calculate positioning EXACTLY like TrueType renderer
-                // Horizontal: center the glyph in the cell
-                let glyph_x_offset = (self.char_width.saturating_sub(metrics.width)) / 2;
+                // Use the font's natural horizontal offset (xmin)
+                let glyph_x_offset = metrics.xmin.max(0) as usize;
 
                 // Vertical positioning using proper baseline formula:
                 // fontdue's ymin is distance from baseline to BOTTOM of glyph
@@ -233,7 +323,7 @@ impl FontConverter {
                 // Then adjust by y_offset_adjustment to fit in tight bounding box
                 let glyph_y_offset = baseline_offset.round() as i32 - metrics.ymin - metrics.height as i32 - self.y_offset_adjustment;
 
-                // Write bitmap with anti-aliasing support (stepped intensity levels)
+                // Generate bitmap with anti-aliasing support (stepped intensity levels)
                 // Map grayscale values to characters:
                 // . = 0% (blank/background)
                 // 1 = 10%, 2 = 20%, 3 = 30%, 4 = 40%, 5 = 50%,
@@ -270,9 +360,30 @@ impl FontConverter {
                             243..=255 => 'x',   // 95-100% -> solid
                         };
 
-                        write!(file, "{}", ch)?;
+                        if ch != '.' {
+                            is_blank = false;
+                        }
+                        bitmap_data.push(ch);
                     }
-                    writeln!(file)?;
+                    bitmap_data.push('\n');
+                }
+            }
+
+            // Check if this bitmap is blank (all dots)
+            if is_blank {
+                writeln!(file, "blank true")?;
+            } else {
+                // For deduplication, create a key WITHOUT newlines (just the pixel data)
+                let bitmap_key: String = bitmap_data.chars().filter(|&c| c != '\n').collect();
+
+                // Check if we've seen this exact bitmap before
+                if let Some(&original_idx) = bitmap_to_index.get(&bitmap_key) {
+                    // This is a duplicate - reference the original
+                    writeln!(file, "sameas {}", original_idx)?;
+                } else {
+                    // New unique bitmap - store it and write the data
+                    bitmap_to_index.insert(bitmap_key, *idx);
+                    write!(file, "{}", bitmap_data)?;
                 }
             }
             writeln!(file)?;
@@ -295,7 +406,8 @@ impl FontConverter {
         Ok(())
     }
 
-    /// Generate a default character set with common terminal characters
+    /// Generate a comprehensive character set including emoji and common Unicode
+    /// Only includes characters that render as distinct glyphs (not empty boxes)
     fn generate_default_character_set(&self) -> Vec<char> {
         let mut chars = Vec::new();
 
@@ -305,28 +417,103 @@ impl FontConverter {
             chars.push(char::from_u32(i).unwrap());
         }
 
-        // Add common Unicode box drawing characters (these will get indices 256+)
-        let box_drawing = [
-            '─', '│', '┌', '┐', '└', '┘', '├', '┤', '┬', '┴', '┼',
-            '═', '║', '╔', '╗', '╚', '╝', '╠', '╣', '╦', '╩', '╬',
-            '╭', '╮', '╯', '╰',
+        // Define specific Unicode blocks that are commonly used in terminals
+        // This is much more efficient than testing all 65k+ code points
+        let unicode_ranges = [
+            // Latin Extended-A (U+0100-U+017F) - À, Ñ, ü, etc.
+            (0x0100, 0x017F, "Latin Extended-A"),
+
+            // Latin Extended-B (U+0180-U+024F)
+            (0x0180, 0x024F, "Latin Extended-B"),
+
+            // Greek and Coptic (U+0370-U+03FF) - α, β, γ, etc.
+            (0x0370, 0x03FF, "Greek and Coptic"),
+
+            // Cyrillic (U+0400-U+04FF) - Д, Ж, И, etc.
+            (0x0400, 0x04FF, "Cyrillic"),
+
+            // General Punctuation (U+2000-U+206F) - —, †, ‡, etc.
+            (0x2000, 0x206F, "General Punctuation"),
+
+            // Currency Symbols (U+20A0-U+20CF) - €, ¥, £, etc.
+            (0x20A0, 0x20CF, "Currency Symbols"),
+
+            // Letterlike Symbols (U+2100-U+214F) - ™, ℓ, №, etc.
+            (0x2100, 0x214F, "Letterlike Symbols"),
+
+            // Arrows (U+2190-U+21FF) - ←, ↑, →, ↓, etc.
+            (0x2190, 0x21FF, "Arrows"),
+
+            // Mathematical Operators (U+2200-U+22FF) - ∀, ∂, ∈, etc.
+            (0x2200, 0x22FF, "Mathematical Operators"),
+
+            // Box Drawing (U+2500-U+257F) - ─, │, ┌, etc.
+            (0x2500, 0x257F, "Box Drawing"),
+
+            // Block Elements (U+2580-U+259F) - █, ▓, ▒, etc.
+            (0x2580, 0x259F, "Block Elements"),
+
+            // Geometric Shapes (U+25A0-U+25FF) - ■, ●, ◆, etc.
+            (0x25A0, 0x25FF, "Geometric Shapes"),
+
+            // Miscellaneous Symbols (U+2600-U+26FF) - ☀, ☁, ☂, ★, ☆, ♠, ♣, ♥, ♦, etc.
+            (0x2600, 0x26FF, "Miscellaneous Symbols"),
+
+            // Dingbats (U+2700-U+27BF) - ✓, ✗, ✨ (SPARKLES!), ❤, etc.
+            (0x2700, 0x27BF, "Dingbats"),
+
+            // Braille Patterns (U+2800-U+28FF)
+            (0x2800, 0x28FF, "Braille Patterns"),
+
+            // Supplemental Arrows-B (U+2900-U+297F)
+            (0x2900, 0x297F, "Supplemental Arrows-B"),
+
+            // Miscellaneous Mathematical Symbols-A (U+27C0-U+27EF)
+            (0x27C0, 0x27EF, "Miscellaneous Mathematical Symbols-A"),
+
+            // Miscellaneous Mathematical Symbols-B (U+2980-U+29FF)
+            (0x2980, 0x29FF, "Miscellaneous Mathematical Symbols-B"),
+
+            // CJK Symbols and Punctuation (U+3000-U+303F)
+            (0x3000, 0x303F, "CJK Symbols and Punctuation"),
+
+            // Emoji and Pictographs (U+1F300-U+1F6FF) - 🌍, 🔥, 💻, 🚀, etc.
+            (0x1F300, 0x1F6FF, "Miscellaneous Symbols and Pictographs"),
+
+            // Emoticons (U+1F600-U+1F64F) - 😀, 😂, 😍, etc.
+            (0x1F600, 0x1F64F, "Emoticons"),
+
+            // Supplemental Symbols and Pictographs (U+1F900-U+1F9FF)
+            (0x1F900, 0x1F9FF, "Supplemental Symbols and Pictographs"),
+
+            // Extended Pictographs (U+1FA00-U+1FA6F)
+            (0x1FA00, 0x1FA6F, "Extended Pictographs"),
         ];
-        chars.extend_from_slice(&box_drawing);
 
-        // Block elements
-        let blocks = [
-            '█', '▓', '▒', '░', '▀', '▄', '▌', '▐',
-            '▁', '▂', '▃', '▅', '▆', '▇',
-        ];
-        chars.extend_from_slice(&blocks);
+        let mut added_count = 0;
+        for (start, end, name) in unicode_ranges {
+            let mut block_count = 0;
+            for code_point in start..=end {
+                if let Some(ch) = char::from_u32(code_point) {
+                    let (_metrics, bitmap) = self.font.rasterize(ch, self.font_size);
 
-        // Arrows
-        let arrows = ['↑', '↓', '→', '←', '↔', '↕', '▲', '▼', '►', '◄'];
-        chars.extend_from_slice(&arrows);
+                    // Only include if the glyph has actual pixels (not an empty box)
+                    // Check if bitmap has any non-zero pixels
+                    let has_pixels = bitmap.iter().any(|&pixel| pixel > 10);
 
-        // Common symbols
-        let symbols = ['•', '○', '●', '◆', '◇', '■', '□', '°', '±', '×', '÷'];
-        chars.extend_from_slice(&symbols);
+                    if has_pixels {
+                        chars.push(ch);
+                        block_count += 1;
+                    }
+                }
+            }
+            if block_count > 0 {
+                eprintln!("  Added {} glyphs from {}", block_count, name);
+            }
+            added_count += block_count;
+        }
+
+        eprintln!("Font enumeration: {} total characters (256 ASCII + {} Unicode)", chars.len(), added_count);
 
         chars
     }

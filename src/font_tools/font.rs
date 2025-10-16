@@ -322,7 +322,73 @@ impl Font {
         Self::parse_fd_font(&font_data)
     }
 
-    /// Get list of available embedded font names
+    /// Get list of available embedded font names, categorized by type
+    pub fn available_fonts_categorized() -> (Vec<String>, Vec<String>) {
+        let mut modern_fonts = Vec::new();
+        let mut retro_fonts = Vec::new();
+
+        for path in EmbeddedFonts::iter() {
+            let path_str = path.as_ref();
+            if path_str.ends_with(".fd") {
+                if let Some(name) = path_str.strip_suffix(".fd") {
+                    if name.starts_with("modern_") {
+                        modern_fonts.push(name.to_string());
+                    } else {
+                        retro_fonts.push(name.to_string());
+                    }
+                }
+            }
+        }
+
+        modern_fonts.sort();
+        retro_fonts.sort();
+
+        (modern_fonts, retro_fonts)
+    }
+
+    /// Get licensing information for a font
+    pub fn get_font_license(font_name: &str) -> Option<(&'static str, &'static str, &'static str)> {
+        // Returns (license, copyright, license_url)
+
+        // Modern fonts (from themes/font_Ext)
+        if font_name.starts_with("modern_Adwaita_Mono") {
+            return Some((
+                "SIL Open Font License 1.1 (OFL)",
+                "© 2015-2025 Renzhi Li (aka. Belleve Invis)",
+                "https://github.com/ndonald2/ttyvid"
+            ));
+        }
+        if font_name.starts_with("modern_Liberation_Mono") {
+            return Some((
+                "SIL Open Font License 1.1 (OFL)",
+                "© 2010 Google Corporation, © 2012 Red Hat, Inc.",
+                "https://github.com/ndonald2/ttyvid"
+            ));
+        }
+        if font_name.starts_with("modern_Noto_Sans_Mono") {
+            return Some((
+                "Apache License 2.0",
+                "© Google",
+                "https://github.com/ndonald2/ttyvid"
+            ));
+        }
+        if font_name.starts_with("modern_Source_Code_Pro") {
+            return Some((
+                "SIL Open Font License 1.1 (OFL)",
+                "© 2023 Adobe",
+                "https://github.com/ndonald2/ttyvid"
+            ));
+        }
+
+        // Retro fonts (public domain / freely redistributable)
+        Some((
+            "Public Domain / Freely Redistributable",
+            "Various sources - see repository for details",
+            "https://github.com/ndonald2/ttyvid"
+        ))
+    }
+
+    /// Get list of available embedded font names (all fonts)
     pub fn available_fonts() -> Vec<String> {
         EmbeddedFonts::iter()
             .filter_map(|path| {
@@ -503,6 +569,11 @@ impl Font {
                     .nth(1)
                     .and_then(|s| s.parse().ok())
                     .ok_or("Invalid height")?;
+            } else if line.starts_with("width") {
+                width = line.split_whitespace()
+                    .nth(1)
+                    .and_then(|s| s.parse().ok())
+                    .ok_or("Invalid width")?;
             } else if line.starts_with("charset") {
                 charset_size = line.split_whitespace()
                     .nth(1)
@@ -582,17 +653,36 @@ impl Font {
         let mut current_unicode: Option<char> = None;
         let mut current_width = width;
         let mut bitmap_lines: Vec<String> = Vec::new();
+        let mut is_blank = false;
+        let mut sameas_idx: Option<usize> = None;
+
+        // Track index->char mapping for sameas references
+        let mut idx_to_char: HashMap<usize, char> = HashMap::new();
 
         for line in lines {
             let line = line.trim();
 
             if line.starts_with("char") {
                 // Save previous character if we have one
-                if let (Some(_idx), Some(unicode_ch)) = (current_char_idx, current_unicode) {
-                    if bitmap_lines.len() == height {
+                if let (Some(idx), Some(unicode_ch)) = (current_char_idx, current_unicode) {
+                    if is_blank {
+                        // Blank character - insert empty glyph
+                        glyphs.insert(unicode_ch, vec![0u8; current_width * height]);
+                    } else if let Some(sameas) = sameas_idx {
+                        // Duplicate character - reference the original
+                        if let Some(&original_ch) = idx_to_char.get(&sameas) {
+                            if let Some(original_glyph) = glyphs.get(&original_ch) {
+                                glyphs.insert(unicode_ch, original_glyph.clone());
+                            }
+                        }
+                    } else if bitmap_lines.len() == height {
+                        // Normal character with bitmap data
                         let glyph = Self::parse_bitmap_intensity(&bitmap_lines, current_width, height);
                         glyphs.insert(unicode_ch, glyph);
                     }
+
+                    // Remember this mapping for sameas references
+                    idx_to_char.insert(idx, unicode_ch);
                 }
 
                 // Start new character
@@ -602,6 +692,8 @@ impl Font {
                 current_unicode = None; // Will be set by unicode line
                 bitmap_lines.clear();
                 current_width = width;
+                is_blank = false;
+                sameas_idx = None;
             } else if line.starts_with("unicode") {
                 // Parse unicode value (e.g., "unicode 0x0041")
                 if let Some(hex_str) = line.split_whitespace().nth(1) {
@@ -616,6 +708,14 @@ impl Font {
                     .nth(1)
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(width);
+            } else if line.starts_with("blank") {
+                // Check if "blank true"
+                is_blank = line.contains("true");
+            } else if line.starts_with("sameas") {
+                // Parse "sameas <index>"
+                sameas_idx = line.split_whitespace()
+                    .nth(1)
+                    .and_then(|s| s.parse().ok());
             } else if !line.is_empty() && !line.starts_with('#') &&
                      (line.contains('x') || line.contains('.') || line.chars().any(|c| c.is_ascii_digit())) {
                 bitmap_lines.push(line.to_string());
@@ -623,11 +723,20 @@ impl Font {
         }
 
         // Save last character
-        if let (Some(_idx), Some(unicode_ch)) = (current_char_idx, current_unicode) {
-            if bitmap_lines.len() == height {
+        if let (Some(idx), Some(unicode_ch)) = (current_char_idx, current_unicode) {
+            if is_blank {
+                glyphs.insert(unicode_ch, vec![0u8; current_width * height]);
+            } else if let Some(sameas) = sameas_idx {
+                if let Some(&original_ch) = idx_to_char.get(&sameas) {
+                    if let Some(original_glyph) = glyphs.get(&original_ch) {
+                        glyphs.insert(unicode_ch, original_glyph.clone());
+                    }
+                }
+            } else if bitmap_lines.len() == height {
                 let glyph = Self::parse_bitmap_intensity(&bitmap_lines, current_width, height);
                 glyphs.insert(unicode_ch, glyph);
             }
+            idx_to_char.insert(idx, unicode_ch);
         }
 
         Ok(Font::BitmapIntensity {
@@ -667,20 +776,20 @@ impl Font {
                 if i >= char_width {
                     break;
                 }
-                // Map intensity characters to u8 values
-                // . = 0, 1 = 25, 2 = 51, ... 9 = 230, x = 255
+                // Map intensity characters to 0-10 scale
+                // . = 0 (0%), 1 = 1 (10%), 2 = 2 (20%), ..., 9 = 9 (90%), x = 10 (100%)
                 let intensity = match ch {
                     '.' => 0,
-                    '1' => 25,
-                    '2' => 51,
-                    '3' => 76,
-                    '4' => 102,
-                    '5' => 127,
-                    '6' => 153,
-                    '7' => 178,
-                    '8' => 204,
-                    '9' => 230,
-                    'x' | 'X' => 255,
+                    '1' => 1,
+                    '2' => 2,
+                    '3' => 3,
+                    '4' => 4,
+                    '5' => 5,
+                    '6' => 6,
+                    '7' => 7,
+                    '8' => 8,
+                    '9' => 9,
+                    'x' | 'X' => 10,
                     _ => 0, // Unknown character, treat as blank
                 };
                 bitmap.push(intensity);
