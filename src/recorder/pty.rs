@@ -55,6 +55,11 @@ impl PtyRecorder {
             CommandBuilder::new(shell)
         };
 
+        // Set current working directory to where ttyvid was invoked
+        if let Ok(cwd) = std::env::current_dir() {
+            cmd.cwd(cwd);
+        }
+
         // Set environment variables
         for (key, value) in &config.env {
             cmd.env(key, value);

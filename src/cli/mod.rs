@@ -135,6 +135,10 @@ pub enum Command {
         /// Show real-time stats display during recording
         #[arg(long)]
         stats: bool,
+
+        /// Verbose output (show detailed messages)
+        #[arg(short, long)]
+        verbose: bool,
     },
 
     /// Convert .cast file to video

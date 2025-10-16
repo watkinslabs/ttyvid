@@ -33,6 +33,9 @@ pub struct RecordConfig {
     /// Show real-time stats
     pub show_stats: bool,
 
+    /// Verbose output
+    pub verbose: bool,
+
     /// Environment variables to set
     pub env: Vec<(String, String)>,
 }
@@ -47,6 +50,7 @@ impl Default for RecordConfig {
             max_idle: None,
             allow_pause: true,
             show_stats: false,  // Disabled by default - interferes with terminal display
+            verbose: false,
             env: Vec::new(),
         }
     }
@@ -64,14 +68,19 @@ impl Recorder {
 
     /// Start recording session
     pub fn record(&self) -> Result<()> {
-        eprintln!("Starting recording...");
+        if self.config.verbose {
+            eprintln!("Starting recording...");
 
-        if self.config.allow_pause {
-            eprintln!("Press Ctrl+\\ to pause/resume");
+            if self.config.allow_pause {
+                eprintln!("Press Ctrl+\\ to pause/resume");
+            }
+
+            eprintln!("Press Ctrl+D or type 'exit' to stop recording");
+            eprintln!();
+        } else {
+            // Minimal output - just show we're recording
+            eprintln!("● Recording to {} (Ctrl+D to stop)", self.config.output.display());
         }
-
-        eprintln!("Press Ctrl+D or type 'exit' to stop recording");
-        eprintln!();
 
         // Create PTY recorder
         let mut pty = PtyRecorder::new(&self.config)?;
@@ -91,7 +100,11 @@ impl Recorder {
         // Finalize
         writer.close()?;
 
-        eprintln!("\nRecording saved to: {}", self.config.output.display());
+        if self.config.verbose {
+            eprintln!("\nRecording saved to: {}", self.config.output.display());
+        } else {
+            eprintln!("✓ Saved to {}", self.config.output.display());
+        }
 
         Ok(())
     }

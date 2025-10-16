@@ -163,7 +163,7 @@ fn main() -> Result<()> {
 
     // Handle subcommands or legacy mode
     match args.command {
-        Some(cli::Command::Record { ref output, ref command, max_idle, no_pause, stats }) => {
+        Some(cli::Command::Record { ref output, ref command, max_idle, no_pause, stats, verbose }) => {
             // Determine output formats
             let output_formats = if !args.formats.is_empty() {
                 // Use --formats flag
@@ -206,6 +206,7 @@ fn main() -> Result<()> {
                 max_idle,
                 allow_pause: !no_pause,
                 show_stats: stats,  // Disabled by default, enable with --stats
+                verbose,
                 env: Vec::new(),
             };
 
