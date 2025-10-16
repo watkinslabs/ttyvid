@@ -228,6 +228,51 @@ ttyvid list-fonts
 - Finally falls back to embedded bitmap fonts
 - Supports loading from file paths or system font directories
 
+#### Font Conversion
+
+Convert TrueType/OpenType fonts to .fd bitmap format with full UTF-8 support and emoji:
+
+```bash
+# Convert a system font to .fd format
+ttyvid convert-font --font "JetBrains Mono" --size 16 --output my_font.fd
+
+# Convert with specific size
+ttyvid convert-font --font "Liberation Mono" --size 20 --output liberation_20.fd
+
+# Convert from font file
+ttyvid convert-font --font /path/to/font.ttf --size 16 --output custom.fd
+```
+
+**Font converter features:**
+- **Automatic fallback fonts**: Loads Symbola, Noto Emoji, DejaVu Sans for emoji/symbol coverage
+- **Smart character enumeration**: Includes all printable ASCII, Unicode blocks, box drawing, emoji
+- **Deduplication**: Uses `blank` and `sameas` directives to reduce file size by 50-80%
+- **Proper glyph positioning**: Uses natural font metrics (xmin/ymin) for accurate rendering
+- **UTF-8 support**: Full Unicode coverage including emoji (✨ 🚀 💻) and special characters
+
+**Pre-converted fonts** are available in `themes/font_Ext/`:
+- Adwaita Mono 16px (with emoji fallback)
+- Liberation Mono 16px
+- Noto Sans Mono 16px
+- Source Code Pro 16px
+- Symbola 16px (emoji/symbol font)
+- Noto Emoji 16px
+
+**Rebuild all fonts:**
+```bash
+make -f Makefile.fonts
+```
+
+**Character coverage:**
+- All 256 ASCII/CP437 characters
+- Latin Extended (À Ñ ü ö ä)
+- Greek/Cyrillic (α β γ Д Ж И)
+- Box Drawing (─ │ ┌ ┐ └ ┘ ╔ ╗ ╚ ╝)
+- Block Elements (█ ▓ ▒ ░ ▀ ▄ ▌ ▐)
+- Arrows (← ↑ → ↓ ⇐ ⇑ ⇒ ⇓)
+- Math Symbols (∀ ∂ ∈ ∇ ∏ ∑ √ ∞)
+- Emoji & Symbols (✨ ✓ ✗ ❤ ★ ☀ ☁ 🚀 💻)
+
 #### Terminal Cloning
 
 Clone your current terminal's appearance for authentic recordings:
